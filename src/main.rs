@@ -10,11 +10,12 @@ use std::{process::Command, ptr};
 
 use druid::{
     im::Vector,
-    widget::{Controller, CrossAxisAlignment, Flex, Label, List, Scroll, Switch},
-    AppLauncher, Data, Env, Event, EventCtx, Lens, LifeCycle, LifeCycleCtx, LocalizedString,
-    UpdateCtx, Widget, WidgetExt, WindowDesc,
+    widget::{CrossAxisAlignment, Flex, Label, List, Scroll, Switch},
+    AppLauncher, Data, Env, Event, EventCtx, Lens, LocalizedString, Selector, Target, Widget,
+    WidgetExt, WindowDesc,
 };
 use once_cell::sync::Lazy;
+use tweaks::{group_policy_tweaks::SE_LOCK_MEMORY_PRIVILEGE, registry_tweaks::LARGE_SYSTEM_CACHE};
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
@@ -72,23 +73,35 @@ fn make_tweak_switch() -> impl Widget<Tweak> {
         .fix_width(250.0)
         .padding(5.0);
 
+    let applying_label = Label::new(|data: &Tweak, _: &_| {
+        if data.applying {
+            "applying".to_string()
+        } else {
+            "".to_string()
+        }
+    })
+    .padding(5.0);
+
     let switch = Switch::new().lens(Tweak::enabled);
 
     Flex::row()
         .with_child(label)
         .with_flex_spacer(1.0)
+        .with_child(applying_label)
         .with_child(switch)
         .cross_axis_alignment(CrossAxisAlignment::Center)
-        .controller(TweakController)
+        .controller(TweakController::new())
 }
 
-// base model for any tweak, all subtypes will be implemented as traits for this model
+// Base model for any tweak, all subtypes will be implemented as traits for this model
 #[derive(Clone, Data, Lens)]
 pub struct Tweak {
+    pub id: usize,
     pub name: String,
     pub description: String,
     pub enabled: bool,
     pub requires_restart: bool,
+    pub applying: bool,
     pub config: TweakMethod,
 }
 
@@ -432,7 +445,13 @@ impl GroupPolicyTweak {
                     });
 
                     // Free the memory allocated by LsaEnumerateAccountRights
-                    LsaFreeMemory(Some(rights_ptr as *mut _));
+                    match LsaFreeMemory(Some(rights_ptr as *mut _)) {
+                        NTSTATUS(0) => (),
+                        status => eprintln!(
+                            "LsaFreeMemory failed with error code: {}",
+                            LsaNtStatusToWinError(status)
+                        ),
+                    }
 
                     match has_privilege {
                         true => Ok(GroupPolicyValue::Enabled),
@@ -572,11 +591,8 @@ impl GroupPolicyTweak {
                         }
                     }
                 }
-                // Run gpupdate /force after applying the tweak
-                Command::new("gpupdate")
-                    .args(&["/force"])
-                    .status()
-                    .expect("Failed to execute gpupdate");
+                // Run gpupdate /force after applying the tweak asynchronously
+                // (Removed the blocking call here)
                 Ok(())
             } else {
                 let error_code = GetLastError();
@@ -623,7 +639,8 @@ impl Default for AppState {
 
         let mut updated_tweaks = Vector::new();
 
-        for mut tweak in tweaks.iter().cloned() {
+        for (index, mut tweak) in tweaks.iter().cloned().enumerate() {
+            tweak.id = index;
             // Initialize 'enabled' based on current system settings
             match &tweak.config {
                 TweakMethod::Registry(registry_tweak) => {
@@ -667,9 +684,19 @@ impl Default for AppState {
 }
 
 // Controller to handle apply and revert actions
-pub struct TweakController;
+pub struct TweakController {
+    old_enabled: Option<bool>,
+}
 
-impl<W: Widget<Tweak>> Controller<Tweak, W> for TweakController {
+impl TweakController {
+    pub fn new() -> Self {
+        Self { old_enabled: None }
+    }
+}
+
+const SET_APPLYING: Selector<(usize, bool)> = Selector::new("my_app.set_applying");
+
+impl<W: Widget<Tweak>> druid::widget::Controller<Tweak, W> for TweakController {
     fn event(
         &mut self,
         child: &mut W,
@@ -678,72 +705,73 @@ impl<W: Widget<Tweak>> Controller<Tweak, W> for TweakController {
         data: &mut Tweak,
         env: &Env,
     ) {
-        child.event(ctx, event, data, env);
-    }
-
-    fn lifecycle(
-        &mut self,
-        child: &mut W,
-        ctx: &mut LifeCycleCtx,
-        event: &LifeCycle,
-        data: &Tweak,
-        env: &Env,
-    ) {
-        child.lifecycle(ctx, event, data, env);
-    }
-
-    fn update(
-        &mut self,
-        child: &mut W,
-        ctx: &mut UpdateCtx,
-        old_data: &Tweak,
-        data: &Tweak,
-        env: &Env,
-    ) {
-        if old_data.enabled != data.enabled {
-            if data.enabled {
-                if let Err(e) = data.apply() {
-                    println!("Failed to apply tweak '{}': {}", data.name, e);
-                } else {
-                    println!("Applied tweak '{}'", data.name);
+        match event {
+            Event::Command(cmd) => {
+                if let Some((tweak_id, applying)) = cmd.get(SET_APPLYING) {
+                    if *tweak_id == data.id {
+                        data.applying = *applying;
+                        ctx.request_paint();
+                    }
                 }
-            } else {
-                if let Err(e) = data.revert() {
-                    println!("Failed to revert tweak '{}': {}", data.name, e);
+            }
+            _ => {}
+        }
+
+        child.event(ctx, event, data, env);
+
+        if let Some(old_enabled) = self.old_enabled {
+            if old_enabled != data.enabled {
+                if let TweakMethod::GroupPolicy(_) = &data.config {
+                    data.applying = true;
+                    ctx.request_paint();
+
+                    let sink = ctx.get_external_handle();
+                    let tweak_id = data.id;
+                    let data_clone = data.clone();
+
+                    std::thread::spawn(move || {
+                        let result = if data_clone.enabled {
+                            data_clone.apply()
+                        } else {
+                            data_clone.revert()
+                        };
+
+                        if let Err(e) = result {
+                            println!("Failed to apply/revert tweak '{}': {}", data_clone.name, e);
+                        } else {
+                            println!("Applied/Reverted tweak '{}'", data_clone.name);
+                        }
+
+                        // Run gpupdate /force asynchronously
+                        let gpupdate_result = Command::new("gpupdate").args(&["/force"]).status();
+
+                        if let Err(e) = gpupdate_result {
+                            println!("Failed to execute gpupdate: {}", e);
+                        }
+
+                        sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
+                            .expect("Failed to submit command");
+                    });
                 } else {
-                    println!("Reverted tweak '{}'", data.name);
+                    if data.enabled {
+                        if let Err(e) = data.apply() {
+                            println!("Failed to apply tweak '{}': {}", data.name, e);
+                        } else {
+                            println!("Applied tweak '{}'", data.name);
+                        }
+                    } else {
+                        if let Err(e) = data.revert() {
+                            println!("Failed to revert tweak '{}': {}", data.name, e);
+                        } else {
+                            println!("Reverted tweak '{}'", data.name);
+                        }
+                    }
                 }
             }
         }
-        child.update(ctx, old_data, data, env);
+        self.old_enabled = Some(data.enabled);
     }
 }
-
-pub static LARGE_SYSTEM_CACHE: Lazy<Tweak> = Lazy::new(|| {
-    Tweak {
-    name: "LargeSystemCache".to_string(),
-    enabled: false,
-    description: "Optimizes system memory management by adjusting the LargeSystemCache setting.".to_string(),
-    config: TweakMethod::Registry( RegistryTweak{
-        key: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-        name: "LargeSystemCache".to_string(),
-        value: RegistryKeyValue::Dword(1),
-        default_value: RegistryKeyValue::Dword(0),
-    }),
-    requires_restart: false,
-}
-});
-
-pub static SE_LOCK_MEMORY_PRIVILEGE: Lazy<Tweak> = Lazy::new(|| Tweak {
-    name: "SeLockMemoryPrivilege".to_string(),
-    enabled: false,
-    description: "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(),
-    config: TweakMethod::GroupPolicy(GroupPolicyTweak {
-        key: "SeLockMemoryPrivilege".to_string(),
-        value: None,
-    }),
-    requires_restart: true,
-});
 
 fn main() {
     // Setup the main window
