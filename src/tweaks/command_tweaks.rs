@@ -6,7 +6,7 @@ use druid::{im::Vector, Data, Lens};
 use once_cell::sync::Lazy;
 
 use super::TweakMethod;
-use crate::{actions::TweakAction, models::Tweak, ui::widgets::WidgetType};
+use crate::{models::Tweak, ui::widgets::WidgetType};
 
 #[derive(Clone, Data, Lens, Debug)]
 pub struct CommandTweak {
@@ -17,24 +17,13 @@ pub struct CommandTweak {
 }
 
 impl CommandTweak {
-    pub fn is_enabled(&self) -> bool {
-        // For CommandTweaks, attempt to read the current state, and compare with the default state
-        match self.target_state {
-            Some(ref target_state) => {
-                let current_state = self.read_current_state().unwrap_or(None);
-                current_state == Some(target_state.clone().into_iter().collect())
-            }
-            None => false,
-        }
-    }
-
     pub fn read_current_state(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
         // For CommandTweak, read can be a no-op or return an appropriate state
         match &self.read_commands {
             Some(commands) => {
                 let output = commands.iter().map(|c| {
                     Command::new("cmd")
-                        .args(&["/C", c])
+                        .args(["/C", c])
                         .output()
                         .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))
                 });
@@ -54,92 +43,79 @@ impl CommandTweak {
         }
     }
 
-    pub fn apply(&self) -> Result<(), anyhow::Error> {
-        let result = self.apply_commands.iter().try_for_each(|c| {
-            let output = Command::new("cmd")
-                .args(&["/C", c])
+    pub fn run_apply_script(&self) -> Result<(), anyhow::Error> {
+        for script in &self.apply_commands {
+            let output = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    script,
+                ])
                 .output()
-                .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to execute PowerShell script: {}", e))?;
 
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!(
-                    "Command '{}' failed with error: {}",
-                    c,
-                    stderr
-                ))
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(
+                    "PowerShell script failed with error: {}",
+                    stderr.trim()
+                ));
             }
-        });
 
-        match result {
-            Ok(_) => {
-                println!("Successfully applied the tweak");
-                Ok(())
+            // Check if the script indicates that a restart is required
+            if stdout.contains("A system restart is required") {
+                tracing::debug!("A system restart is required for the changes to take effect.");
+                // Update requires_restart flag if necessary
+                // Note: You may need to handle state updates appropriately in your application
             }
-            Err(e) => {
-                eprintln!("Failed to apply the tweak: {}", e);
-                Err(e)
-            }
-        }
-    }
 
-    pub fn revert(&self) -> Result<(), anyhow::Error> {
-        if let Some(revert_commands) = &self.revert_commands {
-            revert_commands.iter().try_for_each(|c| {
-                let output = Command::new("cmd")
-                    .args(&["/C", c])
-                    .output()
-                    .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))?;
-
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    Err(anyhow::anyhow!(
-                        "Command '{}' failed with error: {}",
-                        c,
-                        stderr
-                    ))
-                }
-            })
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl TweakAction for CommandTweak {
-    fn read(&self) -> Result<(), anyhow::Error> {
-        if let Some(target_state) = &self.target_state {
-            let current_state = self.read_current_state()?;
-            if current_state != Some(target_state.clone().into_iter().collect()) {
-                return Err(anyhow::anyhow!("Current state does not match target state"));
-            }
+            tracing::debug!("{}", stdout.trim());
         }
         Ok(())
     }
 
-    fn apply(&self) -> Result<(), anyhow::Error> {
-        self.apply()
-    }
+    pub fn run_revert_script(&self) -> Result<(), anyhow::Error> {
+        if let Some(revert_commands) = &self.revert_commands {
+            for script in revert_commands {
+                let output = Command::new("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        script,
+                    ])
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to execute PowerShell script: {}", e))?;
 
-    fn revert(&self) -> Result<(), anyhow::Error> {
-        self.revert()
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!(
+                        "PowerShell script failed with error: {}",
+                        stderr.trim()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 pub static PROCESS_IDLE_TASKS: Lazy<Tweak> = Lazy::new(|| Tweak {
     id: 0,
     name: "Process Idle Tasks".to_string(),
+    description: "Runs the Process Idle Tasks command to optimize system performance.".to_string(),
     widget: WidgetType::Button,
     enabled: false,
-    description: "Runs the Process Idle Tasks command to optimize system performance.".to_string(),
-    config: TweakMethod::Command(CommandTweak {
+    method: TweakMethod::Command(CommandTweak {
         read_commands: None,
         apply_commands: Vector::from(vec![
-            "Rundll32.exe advapi32.dll,ProcessIdleTasks".to_string()
+            // Run the Process Idle Tasks command
+            "Rundll32.exe advapi32.dll,ProcessIdleTasks".to_string(),
         ]),
         revert_commands: None,
         target_state: None,
@@ -148,20 +124,36 @@ pub static PROCESS_IDLE_TASKS: Lazy<Tweak> = Lazy::new(|| Tweak {
     applying: false,
 });
 
-pub static ENABLE_ULTIMATE_PERFORMANCE_PLAN: Lazy<Tweak> = Lazy::new(|| Tweak {
-    id: 0,
-    name: "Enable Ultimate Performance Plan".to_string(),
-    enabled: false,
-    widget: WidgetType::Switch,
-    description: "Enables the Ultimate Performance power plan for high-end PCs.".to_string(),
-    config: TweakMethod::Command(CommandTweak {
-        read_commands: None,
-        apply_commands: Vector::from(vec![
-            "powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61".to_string(),
-        ]),
-        revert_commands: None,
-        target_state: None,
-    }),
-    requires_restart: false,
-    applying: false,
+pub static ENABLE_ULTIMATE_PERFORMANCE_PLAN: Lazy<Tweak> = Lazy::new(|| {
+    Tweak {
+        id: 0,
+        name: "Enable Ultimate Performance Plan".to_string(),
+        description: "Enables the Ultimate Performance power plan for high-end PCs.".to_string(),
+        enabled: false,
+        widget: WidgetType::Switch,
+        method: TweakMethod::Command(CommandTweak {
+            read_commands: Some(Vector::from(vec![
+                // Check if the Ultimate Performance power plan is enabled
+                "powercfg /GETACTIVESCHEME".to_string(),
+            ])),
+            apply_commands: Vector::from(vec![
+                // Enable the Ultimate Performance power plan
+                "powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61".to_string(),
+                // Enable the High Performance power plan
+                "powercfg /SETACTIVE bce43009-06f9-424c-a125-20ae96dbec1b".to_string(),
+            ]),
+            revert_commands: Some(Vector::from(vec![
+                // Revert to Balanced plan
+                "powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e".to_string(),
+                // Optional: Remove the registry key to re-enable Modern Standby
+                "powercfg /DELETE bce43009-06f9-424c-a125-20ae96dbec1b".to_string(),
+            ])),
+            target_state: Some(Vector::from(vec![
+                "Power Scheme GUID: bce43009-06f9-424c-a125-20ae96dbec1b  (Ultimate Performance)"
+                    .to_string(),
+            ])),
+        }),
+        requires_restart: true,
+        applying: false,
+    }
 });

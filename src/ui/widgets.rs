@@ -47,7 +47,7 @@ pub fn make_tweak_widget() -> impl Widget<Tweak> {
         .with_child(control)
         .with_child(applying_label)
         .cross_axis_alignment(CrossAxisAlignment::Center)
-        .controller(TweakController::new())
+        .controller(TweakController)
 }
 
 fn make_switch() -> impl Widget<Tweak> {
@@ -67,15 +67,15 @@ fn make_command_button() -> impl Widget<Tweak> {
 
             let sink = ctx.get_external_handle();
             let tweak_id = data.id;
-            let data_clone = data.clone();
+            let mut data_clone = data.clone();
 
             std::thread::spawn(move || {
                 let result = data_clone.apply();
 
                 if let Err(ref e) = result {
-                    println!("Failed to execute command '{}': {}", data_clone.name, e);
+                    tracing::debug!("Failed to execute command '{}': {}", data_clone.name, e);
                 } else {
-                    println!("Executed command '{}'", data_clone.name);
+                    tracing::debug!("Executed command '{}'", data_clone.name);
                 }
 
                 sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
@@ -88,12 +88,6 @@ fn make_command_button() -> impl Widget<Tweak> {
 // Controller to handle apply and revert actions
 pub struct TweakController;
 
-impl TweakController {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl<W: Widget<Tweak>> Controller<Tweak, W> for TweakController {
     fn event(
         &mut self,
@@ -103,18 +97,54 @@ impl<W: Widget<Tweak>> Controller<Tweak, W> for TweakController {
         data: &mut Tweak,
         env: &Env,
     ) {
-        if let Event::Command(cmd) = event {
-            if let Some((tweak_id, applying)) = cmd.get(SET_APPLYING) {
-                if *tweak_id == data.id {
-                    data.applying = *applying;
-                    ctx.request_paint();
-                }
-            } else if let Some((tweak_id, enabled)) = cmd.get(UPDATE_TWEAK_ENABLED) {
-                if *tweak_id == data.id {
-                    data.enabled = *enabled;
-                    ctx.request_paint();
-                }
+        if let Event::MouseDown(_) = event {
+            if data.applying {
+                // Do nothing if already applying
+                return;
             }
+
+            data.applying = true;
+            tracing::debug!("Tweak '{}' is now applying.", data.name);
+            ctx.request_paint();
+
+            let sink = ctx.get_external_handle();
+            let tweak_id = data.id;
+            let enabled = data.enabled;
+            let mut data_clone = data.clone();
+
+            std::thread::spawn(move || {
+                let success = if !enabled {
+                    match data_clone.apply() {
+                        Ok(_) => true,
+                        Err(e) => {
+                            tracing::error!("Failed to apply tweak '{}': {}", data_clone.name, e);
+                            false
+                        }
+                    }
+                } else {
+                    match data_clone.revert() {
+                        Ok(_) => false,
+                        Err(e) => {
+                            tracing::error!("Failed to revert tweak '{}': {}", data_clone.name, e);
+                            true
+                        }
+                    }
+                };
+
+                sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
+                    .expect("Failed to submit SET_APPLYING command");
+
+                if success {
+                    tracing::debug!(
+                        "Tweak '{}' successfully toggled to {}.",
+                        data_clone.name,
+                        !enabled
+                    );
+                    // Update data.enabled
+                    sink.submit_command(UPDATE_TWEAK_ENABLED, (tweak_id, !enabled), Target::Auto)
+                        .expect("Failed to submit UPDATE_TWEAK_ENABLED command");
+                }
+            });
         }
         child.event(ctx, event, data, env);
     }

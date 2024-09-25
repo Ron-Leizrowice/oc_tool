@@ -1,4 +1,6 @@
-// src/ui/button.rs
+// src/ui/switch.rs
+
+use std::thread;
 
 use druid::{
     widget::Switch, BoxConstraints, Env, Event, EventCtx, LayoutCtx, LifeCycle, LifeCycleCtx,
@@ -24,19 +26,20 @@ impl Widget<Tweak> for TweakSwitch {
             }
 
             data.applying = true;
+            tracing::debug!("Tweak '{}' is now applying.", data.name);
             ctx.request_paint();
 
             let sink = ctx.get_external_handle();
             let tweak_id = data.id;
             let enabled = data.enabled;
-            let data_clone = data.clone();
+            let mut data_clone = data.clone();
 
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let success = if !enabled {
                     match data_clone.apply() {
                         Ok(_) => true,
                         Err(e) => {
-                            eprintln!("Failed to apply tweak '{}': {}", data_clone.name, e);
+                            tracing::error!("Failed to apply tweak '{}': {}", data_clone.name, e);
                             false
                         }
                     }
@@ -44,63 +47,40 @@ impl Widget<Tweak> for TweakSwitch {
                     match data_clone.revert() {
                         Ok(_) => false,
                         Err(e) => {
-                            eprintln!("Failed to revert tweak '{}': {}", data_clone.name, e);
+                            tracing::error!("Failed to revert tweak '{}': {}", data_clone.name, e);
                             true
                         }
                     }
                 };
 
+                // Always set 'applying' to false
                 sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
-                    .expect("Failed to submit command");
+                    .expect("Failed to submit SET_APPLYING command");
 
                 if success {
-                    // Update data.enabled
-                    sink.submit_command(UPDATE_TWEAK_ENABLED, (tweak_id, !enabled), Target::Auto)
-                        .expect("Failed to submit command");
+                    let new_enabled = !enabled;
+                    sink.submit_command(
+                        UPDATE_TWEAK_ENABLED,
+                        (tweak_id, new_enabled),
+                        Target::Auto,
+                    )
+                    .expect("Failed to submit UPDATE_TWEAK_ENABLED command");
+                    tracing::debug!(
+                        "Tweak '{}' successfully toggled to {}.",
+                        data_clone.name,
+                        new_enabled
+                    );
+                } else {
+                    // Optionally, notify user of failure
+                    tracing::error!(
+                        "Tweak '{}' failed to toggle. Keeping enabled as {}.",
+                        data_clone.name,
+                        enabled
+                    );
                 }
             });
         }
         self.child.event(ctx, event, &mut data.enabled, env);
-
-        if let Event::MouseDown(_) = event {
-            if data.applying {
-                // Do nothing if already applying
-                return;
-            }
-
-            data.applying = true;
-            ctx.request_paint();
-
-            let sink = ctx.get_external_handle();
-            let tweak_id = data.id;
-            let enabled = data.enabled;
-            let data_clone = data.clone();
-
-            std::thread::spawn(move || {
-                let result = if !enabled {
-                    data_clone.apply()
-                } else {
-                    data_clone.revert()
-                };
-
-                let success = result.is_ok();
-
-                if let Err(ref e) = result {
-                    println!("Failed to apply/revert tweak '{}': {}", data_clone.name, e);
-                } else {
-                    println!("Applied/Reverted tweak '{}'", data_clone.name);
-                }
-
-                sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
-                    .expect("Failed to submit command");
-
-                if success {
-                    // Update data.enabled
-                    sink.submit_command(UPDATE_TWEAK_ENABLED, (tweak_id, !enabled), Target::Auto)
-                        .expect("Failed to submit command");
-                }
-            });
-        }
     }
 
     fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, data: &Tweak, env: &Env) {

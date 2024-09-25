@@ -114,7 +114,7 @@ impl GroupPolicyTweak {
             );
 
             // Check the return value of LookupAccountNameW
-            if !lookup_result.is_ok() {
+            if lookup_result.is_ok() {
                 let error_code = GetLastError();
                 return Err(GroupPolicyTweakError::KeyOpenError(format!(
                     "LookupAccountNameW failed. Error code: {}",
@@ -145,7 +145,7 @@ impl GroupPolicyTweak {
                 // Free the memory allocated by LsaEnumerateAccountRights
                 let free_status = LsaFreeMemory(Some(rights_ptr as *mut _));
                 if free_status != NTSTATUS(0) {
-                    eprintln!(
+                    tracing::debug!(
                         "LsaFreeMemory failed with error code: {}",
                         LsaNtStatusToWinError(free_status)
                     );
@@ -214,7 +214,7 @@ impl GroupPolicyTweak {
             let mut sid_name_use = SID_NAME_USE(0);
 
             let user_name = whoami::username();
-            println!("Current user: {}", user_name);
+            tracing::debug!("Current user: {}", user_name);
             let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
 
             // First call to get buffer sizes
@@ -277,7 +277,7 @@ impl GroupPolicyTweak {
                             )));
                         } else {
                             // Privilege was not assigned, so we can consider it already removed
-                            println!(
+                            tracing::debug!(
                                 "Privilege '{}' was not assigned to the user; nothing to remove.",
                                 privilege
                             );
@@ -303,7 +303,7 @@ pub static SE_LOCK_MEMORY_PRIVILEGE: Lazy<Tweak> = Lazy::new(|| Tweak {
     description: "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(),
     widget: WidgetType::Switch,
     enabled: false,
-    config: TweakMethod::GroupPolicy(GroupPolicyTweak {
+    method: TweakMethod::GroupPolicy(GroupPolicyTweak {
         key: "SeLockMemoryPrivilege".to_string(),
         value: GroupPolicyValue::Enabled,
         default_value: GroupPolicyValue::Disabled,

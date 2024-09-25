@@ -35,3 +35,17 @@ pub static ALL_TWEAKS: Lazy<Vector<&Tweak>> = Lazy::new(|| {
         &*ENABLE_ULTIMATE_PERFORMANCE_PLAN,
     ])
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_unique_ids() {
+        let mut ids = Vec::new();
+        for tweak in ALL_TWEAKS.iter() {
+            assert!(!ids.contains(&tweak.id));
+            ids.push(tweak.id);
+        }
+    }
+}

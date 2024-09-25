@@ -14,7 +14,7 @@ impl Drop for LsaHandleGuard {
         unsafe {
             let status = LsaClose(self.handle);
             if status != NTSTATUS(0) {
-                eprintln!(
+                tracing::error!(
                     "LsaClose failed with error code: {}",
                     LsaNtStatusToWinError(status)
                 );

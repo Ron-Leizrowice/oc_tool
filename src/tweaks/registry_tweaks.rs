@@ -116,10 +116,10 @@ impl RegistryTweak {
                         // Log whether the key was created or already existed
                         match disposition {
                             winreg::enums::RegDisposition::REG_CREATED_NEW_KEY => {
-                                println!("Created new registry key: {}", self.key);
+                                tracing::debug!("Created new registry key: {}", self.key);
                             }
                             winreg::enums::RegDisposition::REG_OPENED_EXISTING_KEY => {
-                                println!("Opened existing registry key: {}", self.key);
+                                tracing::debug!("Opened existing registry key: {}", self.key);
                             }
                         }
                         key
@@ -143,9 +143,11 @@ impl RegistryTweak {
                         self.name, self.key, e
                     ))
                 })?;
-                println!(
+                tracing::debug!(
                     "Set string value '{:.?}' to '{:.?}' in key '{:.?}'",
-                    self.value, val, self.key
+                    self.value,
+                    val,
+                    self.key
                 );
             }
             RegistryKeyValue::Dword(val) => {
@@ -155,9 +157,11 @@ impl RegistryTweak {
                         self.name, self.key, e
                     ))
                 })?;
-                println!(
+                tracing::debug!(
                     "Set DWORD value '{:.?}' to '{:.?}' in key '{:.?}'",
-                    self.value, val, self.key
+                    self.value,
+                    val,
+                    self.key
                 );
             } // Handle other types as needed
         }
@@ -211,7 +215,7 @@ pub static LARGE_SYSTEM_CACHE: Lazy<Tweak> = Lazy::new(|| {
     description: "Optimizes system memory management by adjusting the LargeSystemCache setting.".to_string(),
     widget: WidgetType::Switch,
     enabled: false,
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
         name: "LargeSystemCache".to_string(),
         value: RegistryKeyValue::Dword(1),
@@ -229,7 +233,7 @@ pub static SYSTEM_RESPONSIVENESS: Lazy<Tweak> = Lazy::new(|| {
     description: "Optimizes system responsiveness by adjusting the SystemResponsiveness setting.".to_string(),
     widget: WidgetType::Switch,
     enabled: false,
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile".to_string(),
         name: "SystemResponsiveness".to_string(),
         value: RegistryKeyValue::Dword(0),
@@ -246,7 +250,7 @@ pub static DISABLE_HW_ACCELERATION: Lazy<Tweak> = Lazy::new(|| Tweak {
     description: "Disables hardware acceleration for the current user.".to_string(),
     widget: WidgetType::Switch,
     enabled: false,
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
         name: "DisableHWAcceleration".to_string(),
         value: RegistryKeyValue::Dword(1),
@@ -264,7 +268,7 @@ pub static WIN_32_PRIORITY_SEPARATION: Lazy<Tweak> = Lazy::new(|| Tweak {
             .to_string(),
     widget: WidgetType::Switch,
     enabled: false,
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\PriorityControl".to_string(),
         name: "Win32PrioritySeparation".to_string(),
         value: RegistryKeyValue::Dword(26),
@@ -280,7 +284,7 @@ pub static DISABLE_LOW_DISK_CHECK: Lazy<Tweak> = Lazy::new(|| Tweak {
     widget: WidgetType::Switch,
     enabled: false,
     description: "Disables the low disk space check for the current user.".to_string(),
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"
             .to_string(),
         name: "NoLowDiskSpaceChecks".to_string(),
@@ -298,7 +302,7 @@ pub static DISABLE_CORE_PARKING: Lazy<Tweak> = Lazy::new(|| {
     widget: WidgetType::Switch,
     enabled: false,
     description: "Disables core parking to improve system performance.".to_string(),
-    config: TweakMethod::Registry(RegistryTweak {
+    method: TweakMethod::Registry(RegistryTweak {
         key: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
         name: "ValueMax".to_string(),
         value: RegistryKeyValue::Dword(0),
