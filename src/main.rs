@@ -10,12 +10,13 @@ use std::{process::Command, ptr};
 
 use druid::{
     im::Vector,
-    widget::{CrossAxisAlignment, Flex, Label, List, Scroll, Switch},
-    AppLauncher, Data, Env, Event, EventCtx, Lens, LocalizedString, Selector, Target, Widget,
-    WidgetExt, WindowDesc,
+    widget::{Button, Controller, CrossAxisAlignment, Either, Flex, Label, List, Scroll, Switch},
+    AppLauncher, BoxConstraints, Data, Env, Event, EventCtx, LayoutCtx, Lens, LifeCycle,
+    LifeCycleCtx, LocalizedString, PaintCtx, Selector, Size, Target, UpdateCtx, Widget, WidgetExt,
+    WindowDesc,
 };
 use once_cell::sync::Lazy;
-use tweaks::{group_policy_tweaks::SE_LOCK_MEMORY_PRIVILEGE, registry_tweaks::LARGE_SYSTEM_CACHE};
+use tweaks::ALL_TWEAKS;
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
@@ -37,11 +38,16 @@ use winreg::{
 
 use crate::errors::{GroupPolicyTweakError, RegistryTweakError};
 
+static USERNAME: Lazy<String> = Lazy::new(|| whoami::username());
+
 const POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
 const POLICY_LOOKUP_NAMES: u32 = 0x00000800;
 
+const SET_APPLYING: Selector<(usize, bool)> = Selector::new("my_app.set_applying");
+const UPDATE_TWEAK_ENABLED: Selector<(usize, bool)> = Selector::new("my_app.update_tweak_enabled");
+
 pub fn build_root_widget() -> impl Widget<AppState> {
-    let list = List::new(make_tweak_switch);
+    let list = List::new(make_tweak_widget);
     let scroll = Scroll::new(list)
         .vertical()
         .padding(10.0)
@@ -67,11 +73,18 @@ pub fn build_root_widget() -> impl Widget<AppState> {
         .with_child(info_bar)
 }
 
-// Helper function to generate a new switch widget for a tweak
-fn make_tweak_switch() -> impl Widget<Tweak> {
+fn make_tweak_widget() -> impl Widget<Tweak> {
+    // Common label for all tweaks
     let label = Label::new(|data: &Tweak, _: &_| data.name.clone())
         .fix_width(250.0)
         .padding(5.0);
+
+    // Placeholder for the control widget (Switch or Button)
+    let control = Either::new(
+        |data: &Tweak, _: &_| data.widget == WidgetType::Switch,
+        make_switch(),
+        make_command_button(),
+    );
 
     let applying_label = Label::new(|data: &Tweak, _: &_| {
         if data.applying {
@@ -80,17 +93,51 @@ fn make_tweak_switch() -> impl Widget<Tweak> {
             "".to_string()
         }
     })
+    .fix_width(70.0) // Set fixed width to prevent layout shift
     .padding(5.0);
-
-    let switch = Switch::new().lens(Tweak::enabled);
 
     Flex::row()
         .with_child(label)
         .with_flex_spacer(1.0)
+        .with_child(control)
         .with_child(applying_label)
-        .with_child(switch)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .controller(TweakController::new())
+}
+
+fn make_switch() -> impl Widget<Tweak> {
+    TweakSwitch {
+        child: Switch::new(),
+    }
+}
+
+fn make_command_button() -> impl Widget<Tweak> {
+    Button::new("Apply")
+        .on_click(|ctx, data: &mut Tweak, _env| {
+            if data.applying {
+                return;
+            }
+            data.applying = true;
+            ctx.request_paint();
+
+            let sink = ctx.get_external_handle();
+            let tweak_id = data.id;
+            let data_clone = data.clone();
+
+            std::thread::spawn(move || {
+                let result = data_clone.apply();
+
+                if let Err(ref e) = result {
+                    println!("Failed to execute command '{}': {}", data_clone.name, e);
+                } else {
+                    println!("Executed command '{}'", data_clone.name);
+                }
+
+                sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
+                    .expect("Failed to submit command");
+            });
+        })
+        .controller(ButtonController)
 }
 
 // Base model for any tweak, all subtypes will be implemented as traits for this model
@@ -99,10 +146,17 @@ pub struct Tweak {
     pub id: usize,
     pub name: String,
     pub description: String,
+    pub widget: WidgetType,
     pub enabled: bool,
     pub requires_restart: bool,
     pub applying: bool,
     pub config: TweakMethod,
+}
+
+#[derive(Clone, Data, PartialEq)]
+pub enum WidgetType {
+    Switch,
+    Button,
 }
 
 // Trait defining the apply and revert methods
@@ -122,6 +176,9 @@ impl TweakAction for Tweak {
             TweakMethod::GroupPolicy(config) => {
                 config.read_current_value()?;
             }
+            TweakMethod::Command(_) => {
+                // For CommandTweaks, read can be a no-op
+            }
         }
         Ok(())
     }
@@ -133,6 +190,9 @@ impl TweakAction for Tweak {
             }
             TweakMethod::GroupPolicy(config) => {
                 config.apply_group_policy_tweak()?;
+            }
+            TweakMethod::Command(config) => {
+                config.apply()?;
             }
         }
         Ok(())
@@ -146,6 +206,9 @@ impl TweakAction for Tweak {
             TweakMethod::GroupPolicy(config) => {
                 config.revert_group_policy_tweak()?;
             }
+            TweakMethod::Command(_) => {
+                // Typically, commands cannot be reverted, so you can leave this empty or return an error
+            }
         }
         Ok(())
     }
@@ -155,6 +218,7 @@ impl TweakAction for Tweak {
 pub enum TweakMethod {
     Registry(RegistryTweak),
     GroupPolicy(GroupPolicyTweak),
+    Command(CommandTweak),
 }
 
 // Subclass for Registry tweaks
@@ -226,7 +290,7 @@ impl RegistryTweak {
                     ))
                 })?;
                 Ok(RegistryKeyValue::Dword(val))
-            } // Handle other types as needed
+            }
         }
     }
 
@@ -286,8 +350,8 @@ impl RegistryTweak {
             RegistryKeyValue::String(val) => {
                 subkey.set_value(&self.name, val).map_err(|e| {
                     RegistryTweakError::SetValueError(format!(
-                        "Failed to set string value '{:?}': {:?}",
-                        self.value, e
+                        "Failed to set string value '{:?}' in key '{:?}': {:?}",
+                        self.name, self.key, e
                     ))
                 })?;
                 println!(
@@ -298,8 +362,8 @@ impl RegistryTweak {
             RegistryKeyValue::Dword(val) => {
                 subkey.set_value(&self.name, val).map_err(|e| {
                     RegistryTweakError::SetValueError(format!(
-                        "Failed to set DWORD value '{:.?}': {:.?}",
-                        self.value, e
+                        "Failed to set DWORD value '{:?}' in key '{:?}': {:?}",
+                        self.name, self.key, e
                     ))
                 })?;
                 println!(
@@ -341,10 +405,10 @@ impl RegistryTweak {
 
         match &self.default_value {
             RegistryKeyValue::String(val) => subkey
-                .set_value(self.name.clone(), val)
+                .set_value(&self.name, val)
                 .map_err(|e| RegistryTweakError::SetValueError(e.to_string())),
             RegistryKeyValue::Dword(val) => subkey
-                .set_value(self.name.clone(), val)
+                .set_value(&self.name, val)
                 .map_err(|e| RegistryTweakError::SetValueError(e.to_string())),
             // Handle other types as needed
         }
@@ -355,9 +419,11 @@ impl RegistryTweak {
 #[derive(Clone, Data, Lens, Debug)]
 pub struct GroupPolicyTweak {
     pub key: String,
-    pub value: Option<String>,
+    pub value: GroupPolicyValue,
+    pub default_value: GroupPolicyValue,
 }
 
+#[derive(Clone, Copy, Data, PartialEq, Eq, Debug)]
 pub enum GroupPolicyValue {
     Enabled,
     Disabled,
@@ -366,14 +432,16 @@ pub enum GroupPolicyValue {
 impl GroupPolicyTweak {
     pub fn read_current_value(&self) -> Result<GroupPolicyValue, GroupPolicyTweakError> {
         unsafe {
+            // Initialize object attributes for LsaOpenPolicy
             let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
-
+            // Initialize the policy handle to zero to avoid using uninitialized memory
             let mut policy_handle: LSA_HANDLE = LSA_HANDLE(0);
-
+            // Define the desired access rights for the policy object handle (read-only)
             let desired_access = POLICY_LOOKUP_NAMES;
-
+            // Call LsaOpenPolicy to get a handle to the policy object
             let status =
                 LsaOpenPolicy(None, &object_attributes, desired_access, &mut policy_handle);
+            // Check the return value of LsaOpenPolicy
             if status != NTSTATUS(0) {
                 let win_err = LsaNtStatusToWinError(status);
                 return Err(GroupPolicyTweakError::KeyOpenError(format!(
@@ -382,20 +450,20 @@ impl GroupPolicyTweak {
                 )));
             }
 
+            // Ensure the policy handle is closed properly
             let _policy_guard = LsaHandleGuard {
                 handle: policy_handle,
             };
 
+            // Get the SID for the current user to enumerate account rights
             let mut sid_size = 0u32;
             let mut domain_name_size = 0u32;
             let mut sid_name_use = SID_NAME_USE(0);
 
-            let user_name = whoami::username();
-            println!("Current user: {}", user_name);
-            let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
+            let user_name_wide: Vec<u16> = USERNAME.encode_utf16().chain(Some(0)).collect();
 
-            // First call to get buffer sizes
-            let _ = LookupAccountNameW(
+            // First call to LookupAccountNameW to get buffer sizes
+            let lookup_result = LookupAccountNameW(
                 PCWSTR(ptr::null()),
                 PCWSTR(user_name_wide.as_ptr()),
                 PSID(ptr::null_mut()),
@@ -405,13 +473,22 @@ impl GroupPolicyTweak {
                 &mut sid_name_use as *mut _,
             );
 
+            // Check if the function call failed due to insufficient buffer
+            if lookup_result.is_ok() || GetLastError().0 != 122 {
+                // 122 is ERROR_INSUFFICIENT_BUFFER
+                return Err(GroupPolicyTweakError::KeyOpenError(format!(
+                    "LookupAccountNameW failed to get buffer sizes. Error code: {}",
+                    GetLastError().0
+                )));
+            }
+
             let mut sid_buffer = vec![0u8; sid_size as usize];
             let sid = PSID(sid_buffer.as_mut_ptr() as *mut _);
 
             let mut domain_name_buffer = vec![0u16; domain_name_size as usize];
 
-            // Second call to get actual data
-            if LookupAccountNameW(
+            // Second call to LookupAccountNameW to get the actual data
+            let lookup_result = LookupAccountNameW(
                 PCWSTR(ptr::null()),
                 PCWSTR(user_name_wide.as_ptr()),
                 sid,
@@ -419,62 +496,59 @@ impl GroupPolicyTweak {
                 PWSTR(domain_name_buffer.as_mut_ptr()),
                 &mut domain_name_size,
                 &mut sid_name_use as *mut _,
-            )
-            .is_ok()
-            {
-                let mut rights_ptr: *mut LSA_UNICODE_STRING = ptr::null_mut();
-                let mut rights_count: u32 = 0;
+            );
 
-                let status = LsaEnumerateAccountRights(
-                    policy_handle,
-                    sid,
-                    &mut rights_ptr,
-                    &mut rights_count,
-                );
-
-                if status == NTSTATUS(0) {
-                    let rights_slice =
-                        std::slice::from_raw_parts(rights_ptr, rights_count as usize);
-
-                    let privilege_wide: Vec<u16> = self.key.encode_utf16().collect();
-
-                    let has_privilege = rights_slice.iter().any(|right| {
-                        let right_str =
-                            std::slice::from_raw_parts(right.Buffer.0, (right.Length / 2) as usize);
-                        right_str == privilege_wide.as_slice()
-                    });
-
-                    // Free the memory allocated by LsaEnumerateAccountRights
-                    match LsaFreeMemory(Some(rights_ptr as *mut _)) {
-                        NTSTATUS(0) => (),
-                        status => eprintln!(
-                            "LsaFreeMemory failed with error code: {}",
-                            LsaNtStatusToWinError(status)
-                        ),
-                    }
-
-                    match has_privilege {
-                        true => Ok(GroupPolicyValue::Enabled),
-                        false => Ok(GroupPolicyValue::Disabled),
-                    }
-                } else if status == STATUS_OBJECT_NAME_NOT_FOUND {
-                    // The account has no rights assigned
-                    match self.value {
-                        Some(_) => Ok(GroupPolicyValue::Disabled),
-                        None => Ok(GroupPolicyValue::Enabled),
-                    }
-                } else {
-                    let win_err = LsaNtStatusToWinError(status);
-                    Err(GroupPolicyTweakError::ReadValueError(format!(
-                        "LsaEnumerateAccountRights failed with error code: {}",
-                        win_err
-                    )))
-                }
-            } else {
+            // Check the return value of LookupAccountNameW
+            if !lookup_result.is_ok() {
                 let error_code = GetLastError();
-                Err(GroupPolicyTweakError::KeyOpenError(format!(
+                return Err(GroupPolicyTweakError::KeyOpenError(format!(
                     "LookupAccountNameW failed. Error code: {}",
                     error_code.0
+                )));
+            }
+
+            // Prepare to enumerate account rights
+            let mut rights_ptr: *mut LSA_UNICODE_STRING = ptr::null_mut();
+            let mut rights_count: u32 = 0;
+
+            // Call LsaEnumerateAccountRights to get the rights assigned to the SID
+            let status =
+                LsaEnumerateAccountRights(policy_handle, sid, &mut rights_ptr, &mut rights_count);
+
+            if status == NTSTATUS(0) {
+                // Create a slice from the returned rights
+                let rights_slice = std::slice::from_raw_parts(rights_ptr, rights_count as usize);
+
+                let privilege_wide: Vec<u16> = self.key.encode_utf16().collect();
+
+                let has_privilege = rights_slice.iter().any(|right| {
+                    let right_str =
+                        std::slice::from_raw_parts(right.Buffer.0, (right.Length / 2) as usize);
+                    right_str == privilege_wide.as_slice()
+                });
+
+                // Free the memory allocated by LsaEnumerateAccountRights
+                let free_status = LsaFreeMemory(Some(rights_ptr as *mut _));
+                if free_status != NTSTATUS(0) {
+                    eprintln!(
+                        "LsaFreeMemory failed with error code: {}",
+                        LsaNtStatusToWinError(free_status)
+                    );
+                }
+
+                if has_privilege {
+                    Ok(GroupPolicyValue::Enabled)
+                } else {
+                    Ok(GroupPolicyValue::Disabled)
+                }
+            } else if status == STATUS_OBJECT_NAME_NOT_FOUND {
+                // The account has no rights assigned
+                Ok(GroupPolicyValue::Disabled)
+            } else {
+                let win_err = LsaNtStatusToWinError(status);
+                Err(GroupPolicyTweakError::ReadValueError(format!(
+                    "LsaEnumerateAccountRights failed with error code: {}",
+                    win_err
                 )))
             }
         }
@@ -591,8 +665,7 @@ impl GroupPolicyTweak {
                         }
                     }
                 }
-                // Run gpupdate /force after applying the tweak asynchronously
-                // (Removed the blocking call here)
+
                 Ok(())
             } else {
                 let error_code = GetLastError();
@@ -602,6 +675,128 @@ impl GroupPolicyTweak {
                 )))
             }
         }
+    }
+}
+
+#[derive(Clone, Data, Lens, Debug)]
+pub struct CommandTweak {
+    pub read_commands: Option<Vector<String>>,
+    pub apply_commands: Vector<String>,
+    pub revert_commands: Option<Vector<String>>,
+    pub target_state: Option<Vector<String>>,
+}
+
+impl CommandTweak {
+    pub fn is_enabled(&self) -> bool {
+        // For CommandTweaks, attempt to read the current state, and compare with the default state
+        match self.target_state {
+            Some(ref target_state) => {
+                let current_state = self.read_current_state().unwrap_or(None);
+                current_state == Some(target_state.clone().into_iter().collect())
+            }
+            None => false,
+        }
+    }
+
+    pub fn read_current_state(&self) -> Result<Option<Vec<String>>, anyhow::Error> {
+        // For CommandTweak, read can be a no-op or return an appropriate state
+        match &self.read_commands {
+            Some(commands) => {
+                let output = commands.iter().map(|c| {
+                    Command::new("cmd")
+                        .args(&["/C", c])
+                        .output()
+                        .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))
+                });
+
+                let results: Result<Vec<String>, anyhow::Error> = output
+                    .map(|res| {
+                        res.and_then(|output| {
+                            String::from_utf8(output.stdout).map_err(|e| {
+                                anyhow::anyhow!("Failed to convert output to string: {}", e)
+                            })
+                        })
+                    })
+                    .collect();
+                Ok(Some(results?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn apply(&self) -> Result<(), anyhow::Error> {
+        let result = self.apply_commands.iter().try_for_each(|c| {
+            let output = Command::new("cmd")
+                .args(&["/C", c])
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!(
+                    "Command '{}' failed with error: {}",
+                    c,
+                    stderr
+                ))
+            }
+        });
+
+        match result {
+            Ok(_) => {
+                println!("Successfully applied the tweak");
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("Failed to apply the tweak: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    pub fn revert(&self) -> Result<(), anyhow::Error> {
+        if let Some(revert_commands) = &self.revert_commands {
+            revert_commands.iter().try_for_each(|c| {
+                let output = Command::new("cmd")
+                    .args(&["/C", c])
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to execute command '{}': {}", c, e))?;
+
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow::anyhow!(
+                        "Command '{}' failed with error: {}",
+                        c,
+                        stderr
+                    ))
+                }
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl TweakAction for CommandTweak {
+    fn read(&self) -> Result<(), anyhow::Error> {
+        if let Some(target_state) = &self.target_state {
+            let current_state = self.read_current_state()?;
+            if current_state != Some(target_state.clone().into_iter().collect()) {
+                return Err(anyhow::anyhow!("Current state does not match target state"));
+            }
+        }
+        Ok(())
+    }
+
+    fn apply(&self) -> Result<(), anyhow::Error> {
+        self.apply()
+    }
+
+    fn revert(&self) -> Result<(), anyhow::Error> {
+        self.revert()
     }
 }
 
@@ -630,16 +825,10 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        let tweaks = Lazy::new(|| {
-            Vector::from(vec![
-                LARGE_SYSTEM_CACHE.clone(),
-                SE_LOCK_MEMORY_PRIVILEGE.clone(),
-            ])
-        });
-
         let mut updated_tweaks = Vector::new();
 
-        for (index, mut tweak) in tweaks.iter().cloned().enumerate() {
+        for (index, tweak) in ALL_TWEAKS.iter().cloned().enumerate() {
+            let mut tweak = tweak.clone();
             tweak.id = index;
             // Initialize 'enabled' based on current system settings
             match &tweak.config {
@@ -673,8 +862,13 @@ impl Default for AppState {
                         tweak.enabled = false;
                     }
                 },
+                TweakMethod::Command(_) => {
+                    // For CommandTweaks, you might set enabled to false by default
+                    tweak.enabled = false;
+                }
             }
-            updated_tweaks.push_back(tweak);
+            let updated_tweak = tweak.clone();
+            updated_tweaks.push_back(updated_tweak);
         }
 
         AppState {
@@ -683,18 +877,130 @@ impl Default for AppState {
     }
 }
 
-// Controller to handle apply and revert actions
-pub struct TweakController {
-    old_enabled: Option<bool>,
+struct TweakSwitch {
+    child: Switch,
 }
 
-impl TweakController {
-    pub fn new() -> Self {
-        Self { old_enabled: None }
+impl Widget<Tweak> for TweakSwitch {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut Tweak, env: &Env) {
+        if let Event::MouseDown(_) = event {
+            if data.applying {
+                // Do nothing if already applying
+                return;
+            }
+
+            data.applying = true;
+            ctx.request_paint();
+
+            let sink = ctx.get_external_handle();
+            let tweak_id = data.id;
+            let enabled = data.enabled;
+            let data_clone = data.clone();
+
+            std::thread::spawn(move || {
+                let success = if !enabled {
+                    match data_clone.apply() {
+                        Ok(_) => true,
+                        Err(e) => {
+                            eprintln!("Failed to apply tweak '{}': {}", data_clone.name, e);
+                            false
+                        }
+                    }
+                } else {
+                    match data_clone.revert() {
+                        Ok(_) => false,
+                        Err(e) => {
+                            eprintln!("Failed to revert tweak '{}': {}", data_clone.name, e);
+                            true
+                        }
+                    }
+                };
+
+                sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
+                    .expect("Failed to submit command");
+
+                if success {
+                    // Update data.enabled
+                    sink.submit_command(UPDATE_TWEAK_ENABLED, (tweak_id, !enabled), Target::Auto)
+                        .expect("Failed to submit command");
+                }
+            });
+        }
+        self.child.event(ctx, event, &mut data.enabled, env);
+
+        if let Event::MouseDown(_) = event {
+            if data.applying {
+                // Do nothing if already applying
+                return;
+            }
+
+            data.applying = true;
+            ctx.request_paint();
+
+            let sink = ctx.get_external_handle();
+            let tweak_id = data.id;
+            let enabled = data.enabled;
+            let data_clone = data.clone();
+
+            std::thread::spawn(move || {
+                let result = if !enabled {
+                    data_clone.apply()
+                } else {
+                    data_clone.revert()
+                };
+
+                let success = result.is_ok();
+
+                if let Err(ref e) = result {
+                    println!("Failed to apply/revert tweak '{}': {}", data_clone.name, e);
+                } else {
+                    println!("Applied/Reverted tweak '{}'", data_clone.name);
+                }
+
+                sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
+                    .expect("Failed to submit command");
+
+                if success {
+                    // Update data.enabled
+                    sink.submit_command(UPDATE_TWEAK_ENABLED, (tweak_id, !enabled), Target::Auto)
+                        .expect("Failed to submit command");
+                }
+            });
+        }
+    }
+
+    fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, data: &Tweak, env: &Env) {
+        self.child.lifecycle(ctx, event, &data.enabled, env);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx, old_data: &Tweak, data: &Tweak, env: &Env) {
+        self.child
+            .update(ctx, &old_data.enabled, &data.enabled, env);
+    }
+
+    fn layout(
+        &mut self,
+        ctx: &mut LayoutCtx,
+        bc: &BoxConstraints,
+        data: &Tweak,
+        env: &Env,
+    ) -> Size {
+        self.child.layout(ctx, bc, &data.enabled, env)
+    }
+
+    fn paint(&mut self, ctx: &mut PaintCtx, data: &Tweak, env: &Env) {
+        self.child.paint(ctx, &data.enabled, env);
     }
 }
 
-const SET_APPLYING: Selector<(usize, bool)> = Selector::new("my_app.set_applying");
+// Controller to handle apply and revert actions
+pub struct TweakController;
+
+impl TweakController {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 impl<W: Widget<Tweak>> druid::widget::Controller<Tweak, W> for TweakController {
     fn event(
@@ -705,85 +1011,65 @@ impl<W: Widget<Tweak>> druid::widget::Controller<Tweak, W> for TweakController {
         data: &mut Tweak,
         env: &Env,
     ) {
-        match event {
-            Event::Command(cmd) => {
-                if let Some((tweak_id, applying)) = cmd.get(SET_APPLYING) {
-                    if *tweak_id == data.id {
-                        data.applying = *applying;
-                        ctx.request_paint();
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        child.event(ctx, event, data, env);
-
-        if let Some(old_enabled) = self.old_enabled {
-            if old_enabled != data.enabled {
-                if let TweakMethod::GroupPolicy(_) = &data.config {
-                    data.applying = true;
+        if let Event::Command(cmd) = event {
+            if let Some((tweak_id, applying)) = cmd.get(SET_APPLYING) {
+                if *tweak_id == data.id {
+                    data.applying = *applying;
                     ctx.request_paint();
-
-                    let sink = ctx.get_external_handle();
-                    let tweak_id = data.id;
-                    let data_clone = data.clone();
-
-                    std::thread::spawn(move || {
-                        let result = if data_clone.enabled {
-                            data_clone.apply()
-                        } else {
-                            data_clone.revert()
-                        };
-
-                        if let Err(e) = result {
-                            println!("Failed to apply/revert tweak '{}': {}", data_clone.name, e);
-                        } else {
-                            println!("Applied/Reverted tweak '{}'", data_clone.name);
-                        }
-
-                        // Run gpupdate /force asynchronously
-                        let gpupdate_result = Command::new("gpupdate").args(&["/force"]).status();
-
-                        if let Err(e) = gpupdate_result {
-                            println!("Failed to execute gpupdate: {}", e);
-                        }
-
-                        sink.submit_command(SET_APPLYING, (tweak_id, false), Target::Auto)
-                            .expect("Failed to submit command");
-                    });
-                } else {
-                    if data.enabled {
-                        if let Err(e) = data.apply() {
-                            println!("Failed to apply tweak '{}': {}", data.name, e);
-                        } else {
-                            println!("Applied tweak '{}'", data.name);
-                        }
-                    } else {
-                        if let Err(e) = data.revert() {
-                            println!("Failed to revert tweak '{}': {}", data.name, e);
-                        } else {
-                            println!("Reverted tweak '{}'", data.name);
-                        }
-                    }
+                }
+            } else if let Some((tweak_id, enabled)) = cmd.get(UPDATE_TWEAK_ENABLED) {
+                if *tweak_id == data.id {
+                    data.enabled = *enabled;
+                    ctx.request_paint();
                 }
             }
         }
-        self.old_enabled = Some(data.enabled);
+        child.event(ctx, event, data, env);
+    }
+}
+
+struct ButtonController;
+
+impl<W: Widget<Tweak>> Controller<Tweak, W> for ButtonController {
+    fn update(
+        &mut self,
+        child: &mut W,
+        ctx: &mut UpdateCtx,
+        old_data: &Tweak,
+        data: &Tweak,
+        env: &Env,
+    ) {
+        if old_data.applying != data.applying {
+            ctx.request_paint();
+        }
+        child.update(ctx, old_data, data, env);
+    }
+
+    fn event(
+        &mut self,
+        child: &mut W,
+        ctx: &mut EventCtx,
+        event: &Event,
+        data: &mut Tweak,
+        env: &Env,
+    ) {
+        // Disable the button if applying
+        if data.applying {
+            return;
+        }
+        child.event(ctx, event, data, env);
     }
 }
 
 fn main() {
-    // Setup the main window
     let main_window = WindowDesc::new(build_root_widget())
         .title(LocalizedString::new("OC Tool"))
-        .window_size((400.0, 400.0));
+        .window_size((500.0, 400.0));
 
-    // Create the initial app state with multiple tweaks
     let initial_state = AppState::default();
 
-    // Start the application
     AppLauncher::with_window(main_window)
+        .log_to_console()
         .launch(initial_state)
         .expect("launch failed");
 }
