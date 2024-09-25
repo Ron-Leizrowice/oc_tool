@@ -1,7 +1,5 @@
 // src/actions.rs
 
-use druid::im::Vector;
-
 use crate::{models::Tweak, tweaks::TweakMethod};
 
 // Trait defining the apply and revert methods
@@ -23,7 +21,7 @@ impl TweakAction for Tweak {
                 self.enabled = config.read_current_value()? == config.default_value;
                 Ok(())
             }
-            TweakMethod::Command(config) => match &config.target_state {
+            TweakMethod::Command(config) => match &config.default {
                 None => {
                     self.enabled = false;
                     tracing::debug!(
@@ -38,7 +36,7 @@ impl TweakAction for Tweak {
                         self.name
                     );
                     let current_state = match config.read_current_state() {
-                        Ok(state) => Vector::from(state.unwrap()),
+                        Ok(state) => state.unwrap(),
                         Err(e) => {
                             tracing::debug!(
                                 "Failed to read current state for command tweak '{}': {}",
@@ -83,15 +81,21 @@ impl TweakAction for Tweak {
 
     fn revert(&mut self) -> Result<(), anyhow::Error> {
         match &self.method {
-            TweakMethod::Registry(config) => {
-                config.revert_registry_tweak()?;
+            TweakMethod::Registry(method) => {
+                method.revert_registry_tweak()?;
             }
-            TweakMethod::GroupPolicy(config) => {
-                config.revert_group_policy_tweak()?;
+            TweakMethod::GroupPolicy(method) => {
+                method.revert_group_policy_tweak()?;
             }
-            TweakMethod::Command(_) => {
-                // Typically, commands cannot be reverted, so you can leave this empty or return an error
-            }
+            TweakMethod::Command(method) => match method.undo_script {
+                Some(_) => method.run_undo_script()?,
+                None => {
+                    tracing::debug!(
+                        "Command tweak '{}': No undo script defined. Skipping revert.",
+                        self.name
+                    );
+                }
+            },
         }
         Ok(())
     }
