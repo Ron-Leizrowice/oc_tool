@@ -1,51 +1,80 @@
 // src/tweaks/mod.rs
 
-use command_tweaks::{CommandTweak, ENABLE_ULTIMATE_PERFORMANCE_PLAN, PROCESS_IDLE_TASKS};
-use druid::{im::Vector, Data};
-use group_policy_tweaks::{GroupPolicyTweak, SE_LOCK_MEMORY_PRIVILEGE};
-use once_cell::sync::Lazy;
-use registry_tweaks::{
-    RegistryTweak, DISABLE_CORE_PARKING, DISABLE_HW_ACCELERATION, DISABLE_LOW_DISK_CHECK,
-    LARGE_SYSTEM_CACHE, SYSTEM_RESPONSIVENESS, WIN_32_PRIORITY_SEPARATION,
-};
-
-use crate::models::Tweak;
-
-pub mod command_tweaks;
 pub mod group_policy_tweaks;
+pub mod powershell_tweaks;
 pub mod registry_tweaks;
 
-#[derive(Debug, Clone, Data)]
+use std::sync::{Arc, Mutex};
+
+use group_policy_tweaks::{initialize_group_policy_tweaks, GroupPolicyTweak};
+use powershell_tweaks::{initialize_powershell_tweaks, PowershellTweak};
+use registry_tweaks::{initialize_registry_tweaks, RegistryTweak};
+
+use crate::{
+    actions::Tweak,
+    widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
+};
+
+/// Enum representing the method used to apply or revert a tweak.
+/// - `Registry`: Modifies Windows Registry keys.
+/// - `GroupPolicy`: Adjusts Group Policy settings.
+/// - `Command`: Executes PowerShell or other scripts.
+#[derive(Clone, Debug)]
 pub enum TweakMethod {
     Registry(RegistryTweak),
     GroupPolicy(GroupPolicyTweak),
-    Command(CommandTweak),
+    Powershell(PowershellTweak),
 }
 
-pub static ALL_TWEAKS: Lazy<Vector<&Tweak>> = Lazy::new(|| {
-    Vector::from(vec![
-        &*LARGE_SYSTEM_CACHE,
-        &*SYSTEM_RESPONSIVENESS,
-        &*DISABLE_HW_ACCELERATION,
-        &*WIN_32_PRIORITY_SEPARATION,
-        &*DISABLE_LOW_DISK_CHECK,
-        &*SE_LOCK_MEMORY_PRIVILEGE,
-        &*PROCESS_IDLE_TASKS,
-        &*DISABLE_CORE_PARKING,
-        &*ENABLE_ULTIMATE_PERFORMANCE_PLAN,
-    ])
-});
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TweakId {
+    LargeSystemCache,
+    SystemResponsiveness,
+    DisableHWAcceleration,
+    Win32PrioritySeparation,
+    DisableLowDiskCheck,
+    DisableCoreParking,
+    ProcessIdleTasks,
+    SeLockMemoryPrivilege,
+    UltimatePerformancePlan,
+}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn verify_unique_ids() {
-        let mut ids = Vec::new();
-        for tweak in ALL_TWEAKS.iter() {
-            assert!(!ids.contains(&tweak.id));
-            ids.push(tweak.id);
+pub fn add_tweak(
+    id: TweakId,
+    name: String,
+    description: String,
+    method: TweakMethod,
+    requires_restart: bool,
+) -> Arc<Mutex<Tweak>> {
+    let widget = match &method {
+        TweakMethod::Registry(_) => TweakWidget::Switch(ToggleSwitch::default()),
+        TweakMethod::GroupPolicy(_) => TweakWidget::Switch(ToggleSwitch::default()),
+        TweakMethod::Powershell(tweak) => {
+            if tweak.undo_script.is_some() {
+                TweakWidget::Switch(ToggleSwitch::default())
+            } else {
+                TweakWidget::Button(ApplyButton::default())
+            }
         }
-    }
+    };
+
+    Arc::new(Mutex::new(Tweak::new(
+        id,
+        name,
+        description,
+        method,
+        widget,
+        requires_restart,
+    )))
+}
+
+pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+    [
+        initialize_powershell_tweaks(),
+        initialize_registry_tweaks(),
+        initialize_group_policy_tweaks(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }

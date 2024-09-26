@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum RegistryTweakError {
+pub enum RegistryError {
     #[error("Invalid registry key format: {0}")]
     InvalidKeyFormat(String),
 
@@ -24,7 +24,7 @@ pub enum RegistryTweakError {
 }
 
 #[derive(Error, Debug)]
-pub enum GroupPolicyTweakError {
+pub enum GroupPolicyError {
     #[error("Failed to open group policy key: {0}")]
     KeyOpenError(String),
 
@@ -39,4 +39,19 @@ pub enum GroupPolicyTweakError {
 
     #[error("Failed to read group policy value: {0}")]
     ReadValueError(String),
+}
+
+#[derive(Error, Debug)]
+pub enum PowershellError {
+    #[error("Failed to execute PowerShell script: {0}")]
+    ScriptExecutionError(String),
+
+    #[error("Failed to read current state: {0}")]
+    ReadStateError(String),
+
+    #[error("Failed to apply tweak: {0}")]
+    ApplyError(String),
+
+    #[error("Failed to revert tweak: {0}")]
+    RevertError(String),
 }

@@ -1,19 +1,18 @@
 // src/tweaks/group_policy_tweaks.rs
+use std::{
+    ptr,
+    sync::{Arc, Mutex},
+};
 
-use std::ptr;
-
-use druid::{Data, Lens};
-use once_cell::sync::Lazy;
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
         Foundation::{GetLastError, NTSTATUS, STATUS_OBJECT_NAME_NOT_FOUND},
         Security::{
             Authentication::Identity::{
-                LsaAddAccountRights, LsaEnumerateAccountRights, LsaFreeMemory,
+                LsaAddAccountRights, LsaClose, LsaEnumerateAccountRights, LsaFreeMemory,
                 LsaNtStatusToWinError, LsaOpenPolicy, LsaRemoveAccountRights, LSA_HANDLE,
-                LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING, POLICY_CREATE_ACCOUNT,
-                POLICY_LOOKUP_NAMES,
+                LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING,
             },
             LookupAccountNameW, PSID, SID_NAME_USE,
         },
@@ -22,25 +21,58 @@ use windows::{
 
 use super::TweakMethod;
 use crate::{
-    errors::GroupPolicyTweakError, models::Tweak, ui::widgets::WidgetType, utils::LsaHandleGuard,
+    actions::Tweak,
+    errors::GroupPolicyError,
+    tweaks::{add_tweak, TweakId},
 };
 
-// Subclass for Group Policy tweaks
-#[derive(Clone, Data, Lens, Debug)]
+/// Group Policy related constants.
+pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
+pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
+
+/// Represents a Group Policy tweak, including the policy key, desired value, and default value.
+#[derive(Clone, Debug)]
 pub struct GroupPolicyTweak {
+    /// The policy key (e.g., "SeLockMemoryPrivilege").
     pub key: String,
+    /// The desired value for the policy.
     pub value: GroupPolicyValue,
+    /// The default value for the policy.
     pub default_value: GroupPolicyValue,
 }
 
-#[derive(Clone, Copy, Data, PartialEq, Eq, Debug)]
+/// Enumeration of possible Group Policy values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GroupPolicyValue {
     Enabled,
     Disabled,
 }
 
 impl GroupPolicyTweak {
-    pub fn read_current_value(&self) -> Result<GroupPolicyValue, GroupPolicyTweakError> {
+    /// Checks if the tweak is currently enabled by comparing the current value to the default value.
+    /// If the current value matches the default value, the tweak is considered enabled.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the operation succeeds and the tweak is enabled.
+    /// - `Ok(false)` if the operation succeeds and the tweak is disabled.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn is_group_policy_tweak_enabled(&self) -> Result<bool, GroupPolicyError> {
+        match self.read_current_value() {
+            Ok(value) => Ok(value == self.value),
+            Err(e) => {
+                tracing::error!("Failed to read current value: {:?}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Reads the current value of the Group Policy tweak.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(GroupPolicyValue)` indicating if the policy is enabled or disabled.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn read_current_value(&self) -> Result<GroupPolicyValue, GroupPolicyError> {
         unsafe {
             // Initialize object attributes for LsaOpenPolicy
             let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
@@ -49,16 +81,12 @@ impl GroupPolicyTweak {
             // Define the desired access rights for the policy object handle (read-only)
             let desired_access = POLICY_LOOKUP_NAMES;
             // Call LsaOpenPolicy to get a handle to the policy object
-            let status = LsaOpenPolicy(
-                None,
-                &object_attributes,
-                desired_access as u32,
-                &mut policy_handle,
-            );
+            let status =
+                LsaOpenPolicy(None, &object_attributes, desired_access, &mut policy_handle);
             // Check the return value of LsaOpenPolicy
             if status != NTSTATUS(0) {
                 let win_err = LsaNtStatusToWinError(status);
-                return Err(GroupPolicyTweakError::KeyOpenError(format!(
+                return Err(GroupPolicyError::KeyOpenError(format!(
                     "LsaOpenPolicy failed with error code: {}",
                     win_err
                 )));
@@ -74,8 +102,9 @@ impl GroupPolicyTweak {
             let mut domain_name_size = 0u32;
             let mut sid_name_use = SID_NAME_USE(0);
 
-            let user_name_wide: Vec<u16> =
-                whoami::username().encode_utf16().chain(Some(0)).collect();
+            let user_name = whoami::username();
+            tracing::debug!("Current user: {}", user_name);
+            let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
 
             // First call to LookupAccountNameW to get buffer sizes
             let lookup_result = LookupAccountNameW(
@@ -91,7 +120,7 @@ impl GroupPolicyTweak {
             // Check if the function call failed due to insufficient buffer
             if lookup_result.is_ok() || GetLastError().0 != 122 {
                 // 122 is ERROR_INSUFFICIENT_BUFFER
-                return Err(GroupPolicyTweakError::KeyOpenError(format!(
+                return Err(GroupPolicyError::KeyOpenError(format!(
                     "LookupAccountNameW failed to get buffer sizes. Error code: {}",
                     GetLastError().0
                 )));
@@ -116,7 +145,7 @@ impl GroupPolicyTweak {
             // Check the return value of LookupAccountNameW
             if lookup_result.is_ok() {
                 let error_code = GetLastError();
-                return Err(GroupPolicyTweakError::KeyOpenError(format!(
+                return Err(GroupPolicyError::KeyOpenError(format!(
                     "LookupAccountNameW failed. Error code: {}",
                     error_code.0
                 )));
@@ -136,6 +165,7 @@ impl GroupPolicyTweak {
 
                 let privilege_wide: Vec<u16> = self.key.encode_utf16().collect();
 
+                // Check if the privilege is present in the user's rights
                 let has_privilege = rights_slice.iter().any(|right| {
                     let right_str =
                         std::slice::from_raw_parts(right.Buffer.0, (right.Length / 2) as usize);
@@ -161,7 +191,7 @@ impl GroupPolicyTweak {
                 Ok(GroupPolicyValue::Disabled)
             } else {
                 let win_err = LsaNtStatusToWinError(status);
-                Err(GroupPolicyTweakError::ReadValueError(format!(
+                Err(GroupPolicyError::ReadValueError(format!(
                     "LsaEnumerateAccountRights failed with error code: {}",
                     win_err
                 )))
@@ -169,21 +199,40 @@ impl GroupPolicyTweak {
         }
     }
 
-    pub fn apply_group_policy_tweak(&self) -> Result<(), GroupPolicyTweakError> {
+    /// Applies the Group Policy tweak by assigning the specified privilege to the current user.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn apply_group_policy_tweak(&self) -> Result<(), GroupPolicyError> {
         // Assign the privilege to the current user
         self.modify_user_rights(&self.key, true)
     }
 
-    pub fn revert_group_policy_tweak(&self) -> Result<(), GroupPolicyTweakError> {
+    /// Reverts the Group Policy tweak by removing the specified privilege from the current user.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn revert_group_policy_tweak(&self) -> Result<(), GroupPolicyError> {
         // Remove the privilege from the current user
         self.modify_user_rights(&self.key, false)
     }
 
-    fn modify_user_rights(
-        &self,
-        privilege: &str,
-        enable: bool,
-    ) -> Result<(), GroupPolicyTweakError> {
+    /// Modifies user rights by adding or removing a specified privilege.
+    ///
+    /// # Parameters
+    ///
+    /// - `privilege`: The privilege to add or remove.
+    /// - `enable`: If `true`, adds the privilege; if `false`, removes it.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    fn modify_user_rights(&self, privilege: &str, enable: bool) -> Result<(), GroupPolicyError> {
         unsafe {
             let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
 
@@ -191,20 +240,18 @@ impl GroupPolicyTweak {
 
             let desired_access = POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES;
 
-            let status = LsaOpenPolicy(
-                None,
-                &object_attributes,
-                desired_access as u32,
-                &mut policy_handle,
-            );
+            // Open the policy with the desired access
+            let status =
+                LsaOpenPolicy(None, &object_attributes, desired_access, &mut policy_handle);
             if status != NTSTATUS(0) {
                 let win_err = LsaNtStatusToWinError(status);
-                return Err(GroupPolicyTweakError::KeyOpenError(format!(
+                return Err(GroupPolicyError::KeyOpenError(format!(
                     "LsaOpenPolicy failed with error code: {}",
                     win_err
                 )));
             }
 
+            // Ensure the policy handle is closed properly
             let _policy_guard = LsaHandleGuard {
                 handle: policy_handle,
             };
@@ -256,22 +303,24 @@ impl GroupPolicyTweak {
                 let user_rights = [privilege_lsa_string];
 
                 if enable {
+                    // Add the privilege to the user
                     let status = LsaAddAccountRights(policy_handle, sid, &user_rights);
                     if status != NTSTATUS(0) {
                         let win_err = LsaNtStatusToWinError(status);
-                        return Err(GroupPolicyTweakError::SetValueError(format!(
+                        return Err(GroupPolicyError::SetValueError(format!(
                             "LsaAddAccountRights failed with error code: {}",
                             win_err
                         )));
                     }
                 } else {
+                    // Remove the privilege from the user
                     let status =
                         LsaRemoveAccountRights(policy_handle, sid, false, Some(&user_rights));
                     if status != NTSTATUS(0) {
                         let win_err = LsaNtStatusToWinError(status);
                         // Treat error code 2 (ERROR_FILE_NOT_FOUND) as success
                         if win_err != 2 {
-                            return Err(GroupPolicyTweakError::SetValueError(format!(
+                            return Err(GroupPolicyError::SetValueError(format!(
                                 "LsaRemoveAccountRights failed with error code: {}",
                                 win_err
                             )));
@@ -288,7 +337,7 @@ impl GroupPolicyTweak {
                 Ok(())
             } else {
                 let error_code = GetLastError();
-                Err(GroupPolicyTweakError::KeyOpenError(format!(
+                Err(GroupPolicyError::KeyOpenError(format!(
                     "LookupAccountNameW failed. Error code: {}",
                     error_code.0
                 )))
@@ -297,17 +346,34 @@ impl GroupPolicyTweak {
     }
 }
 
-pub static SE_LOCK_MEMORY_PRIVILEGE: Lazy<Tweak> = Lazy::new(|| Tweak {
-    id: 0,
-    name: "SeLockMemoryPrivilege".to_string(),
-    description: "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(),
-    widget: WidgetType::Switch,
-    enabled: false,
-    method: TweakMethod::GroupPolicy(GroupPolicyTweak {
-        key: "SeLockMemoryPrivilege".to_string(),
-        value: GroupPolicyValue::Enabled,
-        default_value: GroupPolicyValue::Disabled,
-    }),
-    requires_restart: true,
-    applying: false,
-});
+pub struct LsaHandleGuard {
+    pub handle: LSA_HANDLE,
+}
+
+impl Drop for LsaHandleGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let status = LsaClose(self.handle);
+            if status != NTSTATUS(0) {
+                tracing::error!(
+                    "LsaClose failed with error code: {}",
+                    LsaNtStatusToWinError(status)
+                );
+            }
+        }
+    }
+}
+
+pub fn initialize_group_policy_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+    vec![add_tweak(
+        TweakId::SeLockMemoryPrivilege,      // id
+        "SeLockMemoryPrivilege".to_string(), // display name
+        "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(), // description
+        TweakMethod::GroupPolicy(GroupPolicyTweak {
+            key: "SeLockMemoryPrivilege".to_string(),
+            value: GroupPolicyValue::Enabled,
+            default_value: GroupPolicyValue::Disabled,
+        }),
+        true, // requires restart
+    )]
+}

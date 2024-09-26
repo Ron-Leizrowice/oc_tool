@@ -1,0 +1,509 @@
+I am working on a windows app for extreme overclocking assistance, which allows the user to apply a variety of tweaks to improve system performance, and undo them.
+
+I am using the Model-View-Update (MVU) pattern with the eframe and egui libraries to create the UI. The app will have a list of tweaks that the user can apply or revert, each with a switch or button to toggle the tweak on or off.
+
+1. Tweaks will be applied either via registry edits, group policy edits, or powershell scripts.
+2. Reversible tweaks (such as changing a registry key) will display a switch, one time tweaks (like processing idle tasks) will be a button.
+3. Once a tweak has been run, it will be processed in the background, and display "applying" next to it. The switch or button should be greyed out and uninterruptable. 
+4. Once a switch based tweak has been applied, the switch should toggle to on, and if it is reverted it should be toggled to off. If the tweak fails to apply or revert, the toggle should not transition.
+5. When the program is started, it should check the state of the all the tweaks and set their switches accordingly.
+6. If the user clicks multiple tweaks, they should be processed in a queue in the background.
+
+What I have so far:
+
+```rust
+// src/main.rs
+pub mod actions;
+pub mod errors;
+pub mod models;
+pub mod tweaks;
+pub mod utils;
+pub mod widgets;
+
+use std::sync::{Arc, Mutex};
+
+use actions::{Action, TweakAction};
+use models::Tweak;
+use tokio::sync::mpsc;
+use tweaks::initialize_all_tweaks;
+
+#[derive(Debug)]
+struct OverclockingApp {
+    /// Shared list of tweaks
+    tweaks: Vec<Arc<Mutex<Tweak>>>,
+    /// Channel to send tweak actions             
+    tweak_queue: mpsc::Sender<Action>,
+}
+
+impl Default for OverclockingApp {
+    fn default() -> Self {
+        let (tx, _rx) = mpsc::channel::<Action>(100);
+
+        OverclockingApp {
+            tweaks: initialize_all_tweaks(),
+            tweak_queue: tx,
+        }
+    }
+}
+
+impl OverclockingApp {
+    async fn get_initial_state(&self) {
+        for tweak in self.tweaks.iter() {
+            let mut tweak = tweak.lock().unwrap();
+            tweak.enabled = tweak.is_enabled().await.unwrap();
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize the application with default values
+    let app = OverclockingApp::default();
+
+    // Get the initial state of all tweaks
+    app.get_initial_state().await;
+}
+```
+
+```rust
+// src/models.rs
+
+use std::sync::atomic::AtomicBool;
+
+use crate::{tweaks::TweakMethod, widgets::TweakWidget};
+
+/// Represents a single tweak that can be applied to the system.
+#[derive(Debug)]
+pub struct Tweak {
+    /// Display name of the tweak.
+    pub name: String,
+    /// Description of what the tweak does.
+    pub description: String,
+    /// The type of UI widget associated with the tweak (e.g., Switch, Button).
+    pub widget: TweakWidget,
+    /// Indicates whether applying this tweak requires a system restart.
+    pub requires_restart: bool,
+    /// The method used to apply/revert the tweak (Registry, Group Policy, Command).
+    pub method: TweakMethod,
+    /// Indicates whether the tweak is currently enabled.
+    pub enabled: AtomicBool,
+}
+
+impl Tweak {
+    pub fn new(
+        name: String,
+        description: String,
+        method: TweakMethod,
+        widget: TweakWidget,
+        requires_restart: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            widget,
+            requires_restart,
+            method,
+            enabled: AtomicBool::new(false),
+        }
+    }
+}
+```
+
+```rust
+// src/actions.rs
+
+use std::{future::Future, sync::atomic::AtomicBool};
+
+use crate::{models::Tweak, tweaks::TweakMethod};
+
+#[derive(Debug)]
+pub enum Action {
+    Apply(Tweak),
+    Revert(Tweak),
+}
+
+/// Trait defining actions that can be performed on a tweak, such as checking if it's enabled,
+/// applying the tweak, and reverting it.
+pub trait TweakAction {
+    /// Determines if the tweak is currently enabled.
+    fn is_enabled(&mut self) -> impl Future<Output = Result<AtomicBool, anyhow::Error>> + Send;
+
+    /// Applies the tweak.
+    fn apply(&mut self) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+
+    /// Reverts the tweak to its default state.
+    fn revert(&mut self) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+}
+
+impl TweakAction for Tweak {
+    /// Checks the current state of the tweak and updates the `enabled` field accordingly.
+    async fn is_enabled(&mut self) -> Result<AtomicBool, anyhow::Error> {
+        match &mut self.method {
+            TweakMethod::Registry(method) => {
+                Ok(AtomicBool::new(method.is_registry_tweak_enabled().await?))
+            }
+            TweakMethod::GroupPolicy(config) => Ok(AtomicBool::new(
+                config.is_group_policy_tweak_enabled().await?,
+            )),
+            TweakMethod::Powershell(config) => Ok(AtomicBool::new(
+                config.is_powershell_script_enabled().await?,
+            )),
+        }
+    }
+
+    /// Applies the tweak based on its method.
+    async fn apply(&mut self) -> Result<(), anyhow::Error> {
+        match &self.method {
+            TweakMethod::Registry(config) => {
+                config.apply_registry_tweak().await?;
+            }
+            TweakMethod::GroupPolicy(config) => {
+                config.apply_group_policy_tweak()?;
+            }
+            TweakMethod::Powershell(config) => {
+                config.run_apply_script()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reverts the tweak to its default state based on its method.
+    async fn revert(&mut self) -> Result<(), anyhow::Error> {
+        match &self.method {
+            TweakMethod::Registry(method) => {
+                method.revert_registry_tweak().await?;
+            }
+            TweakMethod::GroupPolicy(method) => {
+                method.revert_group_policy_tweak()?;
+            }
+            TweakMethod::Powershell(method) => {
+                if method.undo_script.is_some() {
+                    method.run_undo_script()?
+                }
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+```rust
+// src/widgets/mod.rs
+
+use button::ApplyButton;
+use switch::ToggleSwitch;
+
+pub mod button;
+pub mod switch;
+
+/// Enum representing the different widget types for a tweak.
+#[derive(Debug)]
+pub enum TweakWidget {
+    Switch(ToggleSwitch),
+    Button(ApplyButton),
+}
+```
+
+```rust
+// src/widgets/switch.rs
+
+use egui::{self, Color32, Pos2, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
+
+/// Enum representing the state of the ToggleSwitch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToggleSwitchState {
+    Off,
+    InProgress,
+    On,
+}
+
+/// Custom toggle switch widget with state enum.
+#[derive(Debug)]
+pub struct ToggleSwitch {
+    pub state: ToggleSwitchState,
+    stroke_color: Stroke,
+    rounding: Rounding,
+    min_size: Vec2,
+}
+
+impl ToggleSwitch {
+    /// Creates a new `ToggleSwitch` with the given tweak reference.
+    pub fn new() -> Self {
+        Self {
+            state: ToggleSwitchState::Off,
+            stroke_color: Stroke::new(1.0, Color32::BLACK),
+            rounding: Rounding::same(5.0),
+            min_size: Vec2::new(60.0, 30.0),
+        }
+    }
+
+    pub fn fill_color(&self) -> Color32 {
+        match self.state {
+            ToggleSwitchState::Off => Color32::from_rgb(200, 200, 200), // Light Gray
+            ToggleSwitchState::InProgress => Color32::from_rgb(100, 150, 250), // Blue
+            ToggleSwitchState::On => Color32::from_rgb(100, 200, 100),  // Green
+        }
+    }
+}
+
+impl Widget for ToggleSwitch {
+    fn ui(self, ui: &mut Ui) -> Response {
+        // Determine if the switch should be interactive
+        let is_clickable = matches!(self.state, ToggleSwitchState::Off);
+
+        // Set the sense based on interactivity
+        let sense = if is_clickable {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+
+        // Allocate space for the switch
+        let (rect, mut response) = ui.allocate_exact_size(self.min_size, sense);
+
+        // If the switch is clickable and was clicked, update the state
+        if is_clickable && response.clicked() {
+            response.mark_changed();
+        }
+
+        // Attach meta-data for accessibility
+        response.widget_info(|| match self.state {
+            ToggleSwitchState::Off => {
+                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), false, "")
+            }
+            ToggleSwitchState::InProgress | ToggleSwitchState::On => {
+                egui::WidgetInfo::new(egui::WidgetType::Button)
+            }
+        });
+
+        // Paint the switch
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact(&response);
+            let expanded_rect = rect.expand(visuals.expansion);
+            let radius = 0.5 * rect.height();
+
+            // Draw the background rectangle
+            ui.painter().rect(
+                expanded_rect,
+                self.rounding,
+                self.fill_color(),
+                self.stroke_color,
+            );
+
+            // Determine the position of the toggle circle based on state
+            let circle_pos = match self.state {
+                ToggleSwitchState::Off => {
+                    // Left side
+                    Pos2::new(rect.left() + radius, rect.center().y)
+                }
+                ToggleSwitchState::InProgress => {
+                    // Center position to indicate ongoing action
+                    Pos2::new(rect.center().x, rect.center().y)
+                }
+                ToggleSwitchState::On => {
+                    // Right side
+                    Pos2::new(rect.right() - radius, rect.center().y)
+                }
+            };
+
+            // Choose circle fill color based on state
+            let circle_fill = Color32::WHITE;
+
+            // Draw the toggle circle
+            ui.painter()
+                .circle(circle_pos, 0.75 * radius, circle_fill, visuals.fg_stroke);
+        }
+
+        response
+    }
+}
+```
+
+```rust
+// src/widgets/button.rs
+
+use egui::{self, Color32, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
+
+const DEFAULT_TEXT: &str = "Apply";
+const IN_PROGRESS_TEXT: &str = "In Progress";
+const COMPLETED_TEXT: &str = "Done";
+
+/// Enum representing the three states of the `ThreeStateButton`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonState {
+    /// The button is in its default state and is clickable.
+    Default,
+    /// The button is currently processing an action and is not clickable.
+    InProgress,
+    /// The action has been completed, and the button is not clickable.
+    Completed,
+}
+
+#[derive(Debug)]
+pub struct ApplyButton {
+    /// Mutable reference to the button's current state.
+    pub state: ButtonState,
+    fill: Color32,
+    stroke: Stroke,
+    rounding: Rounding,
+    min_size: Vec2,
+}
+
+impl ApplyButton {
+    /// Creates a new `ThreeStateButton` with the given state reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - A mutable reference to the button's current state.
+    pub fn new() -> Self {
+        Self {
+            state: ButtonState::Default,
+            fill: Color32::from_rgb(100, 150, 250),
+            stroke: Stroke::new(1.0, Color32::BLACK),
+            rounding: Rounding::same(5.0),
+            min_size: Vec2::new(100.0, 30.0),
+        }
+    }
+}
+
+impl Widget for ApplyButton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        // Determine the label based on the current state
+        let label = match self.state {
+            ButtonState::Default => DEFAULT_TEXT,
+            ButtonState::InProgress => IN_PROGRESS_TEXT,
+            ButtonState::Completed => COMPLETED_TEXT,
+        };
+
+        // Determine if the button should be interactive
+        let is_clickable = matches!(self.state, ButtonState::Default);
+
+        // Set the sense based on interactivity
+        let sense = if is_clickable {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+
+        // Allocate space for the button
+        let (rect, response) = ui.allocate_exact_size(self.min_size, sense);
+
+        // If the button is clickable and was clicked, emit a response
+        if is_clickable && response.clicked() {
+            // Toggle state if necessary outside of this widget
+            // Here, state changes are handled externally
+            // Optionally, you can handle state changes here as well
+        }
+
+        // Attach meta-data for accessibility
+        response.widget_info(|| match self.state {
+            ButtonState::Default => {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), false, "")
+            }
+            ButtonState::InProgress | ButtonState::Completed => {
+                egui::WidgetInfo::new(egui::WidgetType::Button)
+            }
+        });
+
+        // Paint the button
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact(&response);
+
+            // Draw the button background
+            ui.painter().rect_filled(rect, self.rounding, self.fill);
+            ui.painter().rect_stroke(rect, self.rounding, self.stroke);
+
+            // Calculate the position to center the text
+            let galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    label.to_string(), // Convert &str to String
+                    egui::FontId::default(),
+                    visuals.text_color(),
+                )
+            });
+
+            let text_pos = rect.center() - galley.size() / 2.0;
+
+            // Paint the galley with a fallback color (transparent if not needed)
+            ui.painter().galley(text_pos, galley, Color32::TRANSPARENT);
+        }
+
+        response
+    }
+}
+```
+
+```rust
+// src/tweaks/mod.rs
+
+pub mod group_policy_tweaks;
+pub mod powershell_tweaks;
+pub mod registry_tweaks;
+
+use std::sync::{Arc, Mutex};
+
+use group_policy_tweaks::{initialize_group_policy_tweaks, GroupPolicyTweak};
+use powershell_tweaks::{initialize_powershell_tweaks, PowershellTweak};
+use registry_tweaks::{initialize_registry_tweaks, RegistryTweak};
+
+use crate::{
+    models::Tweak,
+    widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
+};
+
+/// Enum representing the method used to apply or revert a tweak.
+/// - `Registry`: Modifies Windows Registry keys.
+/// - `GroupPolicy`: Adjusts Group Policy settings.
+/// - `Command`: Executes PowerShell or other scripts.
+#[derive(Debug, Clone)]
+pub enum TweakMethod {
+    Registry(RegistryTweak),
+    GroupPolicy(GroupPolicyTweak),
+    Powershell(PowershellTweak),
+}
+
+pub fn add_tweak(
+    name: String,
+    description: String,
+    method: TweakMethod,
+    requires_restart: bool,
+) -> Arc<Mutex<Tweak>> {
+    let widget = match &method {
+        TweakMethod::Registry(_) => TweakWidget::Switch(ToggleSwitch::new()),
+        TweakMethod::GroupPolicy(_) => TweakWidget::Switch(ToggleSwitch::new()),
+        TweakMethod::Powershell(tweak) => {
+            if tweak.undo_script.is_some() {
+                TweakWidget::Button(ApplyButton::new())
+            } else {
+                TweakWidget::Switch(ToggleSwitch::new())
+            }
+        }
+    };
+
+    Arc::new(Mutex::new(Tweak::new(
+        name,
+        description,
+        method,
+        widget,
+        requires_restart,
+    )))
+}
+
+pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+    [
+        initialize_powershell_tweaks(),
+        initialize_registry_tweaks(),
+        initialize_group_policy_tweaks(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+```
+
+The program should work as follows:
+
+1. On initialization, the default state of all tweaks should be retrieved and displayed.
+2. When a tweak is clicked, it's widget should be updated to reflect the in-progress state, and the tweak is added to a queue and executed in the background.
+3. If the tweak is successfully applied or reverted, it is removed from the queue, its `enabled` field is updated, and the widget is updated to reflect the new state.
+4. If the tweak fails to apply or revert, the widget should be returned to its previous state, and an error message should be displayed to the user.
