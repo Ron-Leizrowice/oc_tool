@@ -10,7 +10,6 @@ const COMPLETED_TEXT: &str = "Done";
 pub enum ButtonState {
     Default,
     InProgress,
-    Completed,
 }
 
 #[derive(Clone, Debug)]
@@ -45,7 +44,6 @@ impl Widget for ApplyButton {
         let label = match self.state {
             ButtonState::Default => DEFAULT_TEXT,
             ButtonState::InProgress => IN_PROGRESS_TEXT,
-            ButtonState::Completed => COMPLETED_TEXT,
         };
 
         let is_clickable = matches!(self.state, ButtonState::Default);

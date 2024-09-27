@@ -12,7 +12,7 @@ use registry_tweaks::{initialize_registry_tweaks, RegistryTweak};
 
 use crate::{
     actions::Tweak,
-    widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
+    widgets::TweakWidget,
 };
 
 /// Enum representing the method used to apply or revert a tweak.
@@ -47,13 +47,13 @@ pub fn add_tweak(
     requires_restart: bool,
 ) -> Arc<Mutex<Tweak>> {
     let widget = match &method {
-        TweakMethod::Registry(_) => TweakWidget::Switch(ToggleSwitch::default()),
-        TweakMethod::GroupPolicy(_) => TweakWidget::Switch(ToggleSwitch::default()),
+        TweakMethod::Registry(_) => TweakWidget::Switch,
+        TweakMethod::GroupPolicy(_) => TweakWidget::Switch,
         TweakMethod::Powershell(tweak) => {
             if tweak.undo_script.is_some() {
-                TweakWidget::Switch(ToggleSwitch::default())
+                TweakWidget::Switch
             } else {
-                TweakWidget::Button(ApplyButton::default())
+                TweakWidget::Button
             }
         }
     };

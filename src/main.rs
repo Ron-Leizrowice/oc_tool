@@ -8,16 +8,15 @@ mod worker;
 
 use std::sync::{atomic, Arc, Mutex};
 
-use actions::Tweak;
+use actions::{Tweak, TweakAction};
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::Widget;
-use tracing_subscriber;
-use widgets::{button::ButtonState, switch::ToggleSwitchState};
+use widgets::{button::ButtonState, switch::ToggleSwitchState, TweakWidget};
 
 use crate::{
     actions::TweakStatus,
     tweaks::initialize_all_tweaks,
-    widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
+    widgets::{button::ApplyButton, switch::ToggleSwitch},
     worker::{TweakExecutor, WorkerMessage, WorkerResult},
 };
 
@@ -36,7 +35,20 @@ impl MyApp {
         tracing::info!("Initializing tweak executor...");
         let executor = TweakExecutor::new();
 
-        // Optionally, you can load tweak statuses from persisted state here
+        // Initialize the current state of all tweaks
+        for tweak_arc in &tweaks {
+            let mut tweak = tweak_arc.lock().unwrap();
+            match tweak.is_enabled() {
+                Ok(enabled) => {
+                    tweak.enabled.store(enabled, atomic::Ordering::SeqCst);
+                    tweak.status = TweakStatus::Idle;
+                }
+                Err(e) => {
+                    tweak.status = TweakStatus::Failed(format!("Initialization error: {}", e));
+                    tracing::error!("Failed to initialize tweak {}: {}", tweak.name, e);
+                }
+            }
+        }
 
         Self { tweaks, executor }
     }
@@ -48,17 +60,48 @@ impl App for MyApp {
         while let Ok(result) = self.executor.receiver.try_recv() {
             match result {
                 WorkerResult::TweakCompleted { id, success, error } => {
-                    if let Some(tweak_arc) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id)
-                    {
+                    tracing::info!(
+                        "Processing WorkerResult for tweak ID: {:?}, success: {:?}, error: {:?}",
+                        id,
+                        success,
+                        error
+                    );
+                    if let Some(tweak_arc) = self.tweaks.iter().find(|t| {
+                        let t_lock = t.lock().unwrap();
+                        t_lock.id == id
+                    }) {
                         let mut tweak = tweak_arc.lock().unwrap();
                         if success {
                             tweak.status = TweakStatus::Idle;
-                            // Update toggle state if it's a toggle tweak
+                            // Toggle the enabled state if it's a toggle tweak
+                            if let TweakWidget::Switch = tweak.widget {
+                                // Since the tweak was successfully applied or reverted,
+                                // update the enabled flag based on the action performed
+                                let new_state = if tweak.enabled.load(atomic::Ordering::SeqCst) {
+                                    // If it was enabled, it was just disabled, and vice versa
+                                    false
+                                } else {
+                                    true
+                                };
+                                tweak.enabled.store(new_state, atomic::Ordering::SeqCst);
+                                tracing::info!(
+                                    "Tweak ID: {:?} enabled state set to {:?}",
+                                    id,
+                                    new_state
+                                );
+                            }
                         } else {
                             tweak.status = TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             );
+                            tracing::warn!(
+                                "Tweak ID: {:?} failed with error: {:?}",
+                                id,
+                                tweak.status
+                            );
                         }
+                    } else {
+                        tracing::warn!("Received WorkerResult for unknown tweak ID: {:?}", id);
                     }
                 }
             }
@@ -76,13 +119,13 @@ impl App for MyApp {
                 ui.horizontal(|ui| {
                     // Tweak Information
                     ui.vertical(|ui| {
-                        ui.label(format!("**{}**", tweak.name));
+                        ui.label(tweak.name.to_string());
                         ui.label(&tweak.description);
                     });
 
                     // Tweak Widget
                     match tweak.widget {
-                        TweakWidget::Switch(_) => {
+                        TweakWidget::Switch => {
                             let current_state = match &tweak.status {
                                 TweakStatus::Idle => {
                                     if tweak.enabled.load(atomic::Ordering::SeqCst) {
@@ -116,7 +159,7 @@ impl App for MyApp {
                                         is_toggle,
                                     })
                                 {
-                                    tracing::error!("Failed to send ExecuteTweak message: {}", e);
+                                    tracing::error!("Failed to send ExecuteTweak message: {:?}", e);
                                     // Optionally, revert the status or notify the user
                                     let mut tweak_locked = tweak_to_modify.lock().unwrap();
                                     tweak_locked.status =
@@ -124,7 +167,7 @@ impl App for MyApp {
                                 }
                             }
                         }
-                        TweakWidget::Button(_) => {
+                        TweakWidget::Button => {
                             let current_state = match tweak.status {
                                 TweakStatus::Idle => ButtonState::Default,
                                 TweakStatus::Applying => ButtonState::InProgress,

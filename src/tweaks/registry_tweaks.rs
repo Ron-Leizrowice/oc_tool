@@ -98,7 +98,7 @@ impl RegistryTweak {
             RegistryKeyValue::String(_) => {
                 let val: String = subkey.get_value(&self.name).map_err(|e| {
                     RegistryError::ReadValueError(format!(
-                        "Failed to read string value '{:.?}': {:.?}",
+                        "Failed to read string value '{:?}': {:?}",
                         self.tweak_value, e
                     ))
                 })?;
@@ -107,7 +107,7 @@ impl RegistryTweak {
             RegistryKeyValue::Dword(_) => {
                 let val: u32 = subkey.get_value(&self.name).map_err(|e| {
                     RegistryError::ReadValueError(format!(
-                        "Failed to read DWORD value '{:.?}': {:.?}",
+                        "Failed to read DWORD value '{:?}': {:?}",
                         self.tweak_value, e
                     ))
                 })?;
@@ -183,7 +183,7 @@ impl RegistryTweak {
                     ))
                 })?;
                 tracing::debug!(
-                    "Set string value '{:.?}' to '{:.?}' in key '{:.?}'",
+                    "Set string value '{:?}' to '{:?}' in key '{:?}'",
                     self.tweak_value,
                     val,
                     self.key
@@ -197,7 +197,7 @@ impl RegistryTweak {
                     ))
                 })?;
                 tracing::debug!(
-                    "Set DWORD value '{:.?}' to '{:.?}' in key '{:.?}'",
+                    "Set DWORD value '{:?}' to '{:?}' in key '{:?}'",
                     self.tweak_value,
                     val,
                     self.key
