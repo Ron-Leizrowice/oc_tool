@@ -164,20 +164,38 @@ pub fn initialize_powershell_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
             TweakId::UltimatePerformancePlan,
             "Enable Ultimate Performance Plan".to_string(),
             "Enables the Ultimate Performance power plan for high-end PCs.".to_string(),
-             TweakMethod::Powershell(PowershellTweak {
-                read_script: Some("powercfg /GETACTIVESCHEME".to_string()),
+            TweakMethod::Powershell(PowershellTweak {
+                read_script: Some(
+                    r#"
+                    powercfg /GETACTIVESCHEME
+                    "#.to_string(),
+                ),
                 apply_script: Some(
-                    "powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61; powercfg /SETACTIVE bce43009-06f9-424c-a125-20ae96dbec1b".to_string(),
+                    r#"
+                    powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+                    $ultimatePlans = powercfg /L | Select-String '(Ultimate Performance)' | ForEach-Object { $_.Line }
+                    $ultimatePlans = @($ultimatePlans | ForEach-Object { $_ -replace 'Power Scheme GUID: ', '' -replace ' \(Ultimate Performance\)', '' -replace '\*$', '' } | ForEach-Object { $_.Trim() })
+                    for ($i = 0; $i -lt $ultimatePlans.Length - 1; $i++) { powercfg -delete $ultimatePlans[$i] }
+                    powercfg /SETACTIVE $ultimatePlans[-1]
+                    "#.to_string(),
                 ),
                 undo_script: Some(
-                    "powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e; powercfg /DELETE bce43009-06f9-424c-a125-20ae96dbec1b".to_string(),
+                    r#"
+                    $balancedPlan = powercfg /L | Select-String '(Balanced)' | ForEach-Object { $_.Line }
+                    $balancedPlan = $balancedPlan -replace 'Power Scheme GUID: ', '' -replace ' \(Balanced\)', '' -replace '\*$', '' | ForEach-Object { $_.Trim() }
+                    powercfg /S $balancedPlan
+                    $ultimatePlans = powercfg /L | Select-String '(Ultimate Performance)' | ForEach-Object { $_.Line }
+                    $ultimatePlans = @($ultimatePlans | ForEach-Object { $_ -replace 'Power Scheme GUID: ', '' -replace ' \(Ultimate Performance\)', '' -replace '\*$', '' } | ForEach-Object { $_.Trim() })
+                    foreach ($plan in $ultimatePlans) { powercfg -delete $plan }
+                    "#.to_string(),
                 ),
                 default: Some(
-                    "Power Scheme GUID: bce43009-06f9-424c-a125-20ae96dbec1b  (Ultimate Performance)".to_string(),
+                    r#"
+                    Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)
+                    "#.to_string(),
                 ),
             }),
-
-             true,
-        ),
+            true,
+        )        
     ]
 }

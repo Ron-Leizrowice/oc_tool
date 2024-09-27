@@ -13,68 +13,344 @@ What I have so far:
 
 ```rust
 // src/main.rs
-pub mod actions;
-pub mod errors;
-pub mod models;
-pub mod tweaks;
-pub mod utils;
-pub mod widgets;
+
+mod actions;
+mod errors;
+mod tweaks;
+mod widgets;
+mod worker;
 
 use std::sync::{Arc, Mutex};
 
-use actions::{Action, TweakAction};
-use models::Tweak;
-use tokio::sync::mpsc;
-use tweaks::initialize_all_tweaks;
+use actions::{Tweak, TweakAction};
+use chrono::Local;
+use eframe::{egui, App, Frame, NativeOptions};
+use egui::Widget;
+use fern::Dispatch;
+use log::LevelFilter;
+use widgets::{button::ButtonState, switch::ToggleSwitchState};
 
-#[derive(Debug)]
-struct OverclockingApp {
-    /// Shared list of tweaks
+use crate::{
+    actions::TweakStatus,
+    tweaks::initialize_all_tweaks,
+    widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
+    worker::{TweakExecutor, WorkerMessage, WorkerResult},
+};
+
+// Setting up logging using fern
+fn setup_logging() {
+    Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{} [{}][{}] {}",
+                Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(LevelFilter::Info)
+        .chain(std::io::stdout())
+        .chain(fern::log_file("app.log").unwrap())
+        .apply()
+        .unwrap();
+}
+
+struct MyApp {
     tweaks: Vec<Arc<Mutex<Tweak>>>,
-    /// Channel to send tweak actions             
-    tweak_queue: mpsc::Sender<Action>,
+    executor: TweakExecutor,
 }
 
-impl Default for OverclockingApp {
-    fn default() -> Self {
-        let (tx, _rx) = mpsc::channel::<Action>(100);
+impl MyApp {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // Initialize logging
+        setup_logging();
 
-        OverclockingApp {
-            tweaks: initialize_all_tweaks(),
-            tweak_queue: tx,
-        }
+        // Initialize tweaks
+        let tweaks = initialize_all_tweaks();
+
+        // Initialize tweak executor
+        let executor = TweakExecutor::new();
+
+        // Optionally, you can load tweak statuses from persisted state here
+
+        Self { tweaks, executor }
     }
 }
 
-impl OverclockingApp {
-    async fn get_initial_state(&self) {
-        for tweak in self.tweaks.iter() {
-            let mut tweak = tweak.lock().unwrap();
-            tweak.enabled = tweak.is_enabled().await.unwrap();
+impl App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        // Poll for worker results
+        while let Ok(result) = self.executor.receiver.try_recv() {
+            match result {
+                WorkerResult::TweakCompleted { id, success, error } => {
+                    if let Some(tweak_arc) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id)
+                    {
+                        let mut tweak = tweak_arc.lock().unwrap();
+                        if success {
+                            tweak.status = TweakStatus::Idle;
+                            // Update toggle state if it's a toggle tweak
+                        } else {
+                            tweak.status = TweakStatus::Failed(
+                                error.unwrap_or_else(|| "Unknown error".to_string()),
+                            );
+                        }
+                    }
+                }
+            }
         }
+
+        // Render the UI
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Overclocking Assistant");
+            ui.separator();
+
+            for tweak_arc in &self.tweaks {
+                let tweak = &*tweak_arc.lock().unwrap();
+                ui.horizontal(|ui| {
+                    // Tweak Information
+                    ui.vertical(|ui| {
+                        ui.label(format!("**{}**", tweak.name));
+                        ui.label(&tweak.description);
+                    });
+
+                    // Tweak Widget
+                    match tweak.widget {
+                        TweakWidget::Switch(_) => {
+                            let is_enabled = tweak.clone().is_enabled().unwrap_or(false);
+                            let current_state = match &tweak.status {
+                                TweakStatus::Idle => {
+                                    if is_enabled {
+                                        ToggleSwitchState::On
+                                    } else {
+                                        ToggleSwitchState::Off
+                                    }
+                                }
+                                TweakStatus::Applying => ToggleSwitchState::InProgress,
+                                TweakStatus::Failed(_) => ToggleSwitchState::Off, // Optionally retain previous state
+                            };
+                            let toggle_widget = ToggleSwitch::new(current_state);
+                            let response = toggle_widget.ui(ui);
+
+                            if response.clicked() && current_state != ToggleSwitchState::InProgress
+                            {
+                                // Update status to Applying
+                                if let Some(tweak_arc) = self
+                                    .tweaks
+                                    .iter()
+                                    .find(|t| t.lock().unwrap().id == tweak.id)
+                                {
+                                    let mut tweak_locked = tweak_arc.lock().unwrap();
+                                    tweak_locked.status = TweakStatus::Applying;
+                                }
+
+                                // Send tweak to executor
+                                let is_toggle = true;
+                                let _ = self.executor.sender.send(WorkerMessage::ExecuteTweak {
+                                    tweak: tweak_arc.clone(),
+                                    is_toggle,
+                                });
+                            }
+                        }
+                        TweakWidget::Button(_) => {
+                            let current_state = match tweak.status {
+                                TweakStatus::Idle => ButtonState::Default,
+                                TweakStatus::Applying => ButtonState::InProgress,
+                                TweakStatus::Failed(_) => ButtonState::Default,
+                            };
+                            let button_widget = ApplyButton::new(current_state);
+                            let response = button_widget.ui(ui);
+
+                            if response.clicked() && current_state == ButtonState::Default {
+                                // Update status to Applying
+                                if let Some(tweak_arc) = self
+                                    .tweaks
+                                    .iter()
+                                    .find(|t| t.lock().unwrap().id == tweak.id)
+                                {
+                                    let mut tweak_locked = tweak_arc.lock().unwrap();
+                                    tweak_locked.status = TweakStatus::Applying;
+                                }
+
+                                // Send tweak to executor
+
+                                let is_toggle = false;
+                                let _ = self.executor.sender.send(WorkerMessage::ExecuteTweak {
+                                    tweak: tweak_arc.clone(),
+                                    is_toggle,
+                                });
+                            }
+                        }
+                    }
+
+                    // Status Indicator
+                    match &tweak.status {
+                        TweakStatus::Idle => {}
+                        TweakStatus::Applying => {
+                            ui.label("Applying...");
+                        }
+                        TweakStatus::Failed(ref err) => {
+                            ui.colored_label(egui::Color32::RED, format!("Failed: {}", err));
+                        }
+                    }
+                });
+                ui.separator();
+            }
+        });
+
+        // Request a repaint to keep the UI responsive
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Send shutdown message to executor
+        let _ = self.executor.sender.send(WorkerMessage::Shutdown);
+        // Optionally, wait for executor to finish
     }
 }
 
-#[tokio::main]
-async fn main() {
-    // Initialize the application with default values
-    let app = OverclockingApp::default();
+fn main() -> eframe::Result<()> {
+    // Configure eframe options as needed
+    let options = NativeOptions::default();
+    eframe::run_native(
+        "Overclocking Assistant",
+        options,
+        Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
+    )
+}
+```
 
-    // Get the initial state of all tweaks
-    app.get_initial_state().await;
+
+```rust
+// src/worker.rs
+
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+};
+
+use crossbeam::channel::{unbounded, Receiver, Sender};
+
+use crate::{
+    actions::{Tweak, TweakAction},
+    tweaks::TweakId,
+};
+
+#[derive(Clone, Debug)]
+pub enum WorkerMessage {
+    ExecuteTweak {
+        tweak: Arc<Mutex<Tweak>>,
+        is_toggle: bool,
+    },
+    Shutdown,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkerResult {
+    TweakCompleted {
+        id: TweakId,
+        success: bool,
+        error: Option<String>,
+    },
+}
+
+pub struct TweakExecutor {
+    pub sender: Sender<WorkerMessage>,
+    pub receiver: Receiver<WorkerResult>,
+}
+
+impl TweakExecutor {
+    pub fn new() -> Self {
+        let (task_sender, task_receiver) = unbounded::<WorkerMessage>();
+        let (result_sender, result_receiver) = unbounded::<WorkerResult>();
+
+        thread::spawn(move || {
+            while let Ok(message) = task_receiver.recv() {
+                match message {
+                    WorkerMessage::ExecuteTweak {
+                        tweak: tweak_arc,
+                        is_toggle,
+                    } => {
+                        let tweak_id = {
+                            let tweak_guard = tweak_arc.lock().unwrap();
+                            tweak_guard.id
+                        };
+
+                        tracing::info!(
+                            "Executing tweak {:?} as {}",
+                            tweak_id,
+                            if is_toggle { "Toggle" } else { "Apply" }
+                        );
+
+                        let result = {
+                            let tweak = (*tweak_arc.lock().unwrap()).clone();
+                            if is_toggle {
+                                match tweak.clone().is_enabled() {
+                                    Ok(enabled) => {
+                                        if enabled {
+                                            tweak.revert()
+                                        } else {
+                                            tweak.apply()
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            } else {
+                                tweak.apply()
+                            }
+                        };
+
+                        match result {
+                            Ok(_) => {
+                                tracing::info!("Tweak {:?} executed successfully.", tweak_id);
+                                let _ = result_sender.send(WorkerResult::TweakCompleted {
+                                    id: tweak_id,
+                                    success: true,
+                                    error: None,
+                                });
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to execute tweak {:?}: {}", tweak_id, e);
+                                let _ = result_sender.send(WorkerResult::TweakCompleted {
+                                    id: tweak_id,
+                                    success: false,
+                                    error: Some(e.to_string()),
+                                });
+                            }
+                        }
+                    }
+                    WorkerMessage::Shutdown => {
+                        tracing::info!("TweakExecutor received shutdown signal.");
+                        break;
+                    }
+                }
+            }
+            tracing::info!("TweakExecutor thread terminating.");
+        });
+
+        Self {
+            sender: task_sender,
+            receiver: result_receiver,
+        }
+    }
 }
 ```
 
 ```rust
-// src/models.rs
+// src/actions.rs
 
-use std::sync::atomic::AtomicBool;
+use std::sync::{atomic::AtomicBool, Arc};
 
-use crate::{tweaks::TweakMethod, widgets::TweakWidget};
+use crate::{
+    tweaks::{TweakId, TweakMethod},
+    widgets::TweakWidget,
+};
 
 /// Represents a single tweak that can be applied to the system.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tweak {
+    /// Unique identifier for the tweak.
+    pub id: TweakId,
     /// Display name of the tweak.
     pub name: String,
     /// Description of what the tweak does.
@@ -86,11 +362,21 @@ pub struct Tweak {
     /// The method used to apply/revert the tweak (Registry, Group Policy, Command).
     pub method: TweakMethod,
     /// Indicates whether the tweak is currently enabled.
-    pub enabled: AtomicBool,
+    pub enabled: Arc<AtomicBool>,
+    /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
+    pub status: TweakStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TweakStatus {
+    Idle,
+    Applying,
+    Failed(String),
 }
 
 impl Tweak {
     pub fn new(
+        id: TweakId,
         name: String,
         description: String,
         method: TweakMethod,
@@ -98,64 +384,46 @@ impl Tweak {
         requires_restart: bool,
     ) -> Self {
         Self {
+            id,
             name,
             description,
             widget,
             requires_restart,
             method,
-            enabled: AtomicBool::new(false),
+            enabled: Arc::new(AtomicBool::new(false)),
+            status: TweakStatus::Idle,
         }
     }
-}
-```
-
-```rust
-// src/actions.rs
-
-use std::{future::Future, sync::atomic::AtomicBool};
-
-use crate::{models::Tweak, tweaks::TweakMethod};
-
-#[derive(Debug)]
-pub enum Action {
-    Apply(Tweak),
-    Revert(Tweak),
 }
 
 /// Trait defining actions that can be performed on a tweak, such as checking if it's enabled,
 /// applying the tweak, and reverting it.
 pub trait TweakAction {
     /// Determines if the tweak is currently enabled.
-    fn is_enabled(&mut self) -> impl Future<Output = Result<AtomicBool, anyhow::Error>> + Send;
+    fn is_enabled(self) -> Result<bool, anyhow::Error>;
 
     /// Applies the tweak.
-    fn apply(&mut self) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    fn apply(self) -> Result<(), anyhow::Error>;
 
     /// Reverts the tweak to its default state.
-    fn revert(&mut self) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    fn revert(self) -> Result<(), anyhow::Error>;
 }
 
 impl TweakAction for Tweak {
     /// Checks the current state of the tweak and updates the `enabled` field accordingly.
-    async fn is_enabled(&mut self) -> Result<AtomicBool, anyhow::Error> {
-        match &mut self.method {
-            TweakMethod::Registry(method) => {
-                Ok(AtomicBool::new(method.is_registry_tweak_enabled().await?))
-            }
-            TweakMethod::GroupPolicy(config) => Ok(AtomicBool::new(
-                config.is_group_policy_tweak_enabled().await?,
-            )),
-            TweakMethod::Powershell(config) => Ok(AtomicBool::new(
-                config.is_powershell_script_enabled().await?,
-            )),
+    fn is_enabled(self) -> Result<bool, anyhow::Error> {
+        match self.method {
+            TweakMethod::Registry(method) => Ok(method.is_registry_tweak_enabled()?),
+            TweakMethod::GroupPolicy(config) => Ok(config.is_group_policy_tweak_enabled()?),
+            TweakMethod::Powershell(config) => Ok(config.is_powershell_script_enabled()?),
         }
     }
 
     /// Applies the tweak based on its method.
-    async fn apply(&mut self) -> Result<(), anyhow::Error> {
+    fn apply(self) -> Result<(), anyhow::Error> {
         match &self.method {
             TweakMethod::Registry(config) => {
-                config.apply_registry_tweak().await?;
+                config.apply_registry_tweak()?;
             }
             TweakMethod::GroupPolicy(config) => {
                 config.apply_group_policy_tweak()?;
@@ -168,10 +436,10 @@ impl TweakAction for Tweak {
     }
 
     /// Reverts the tweak to its default state based on its method.
-    async fn revert(&mut self) -> Result<(), anyhow::Error> {
+    fn revert(self) -> Result<(), anyhow::Error> {
         match &self.method {
             TweakMethod::Registry(method) => {
-                method.revert_registry_tweak().await?;
+                method.revert_registry_tweak()?;
             }
             TweakMethod::GroupPolicy(method) => {
                 method.revert_group_policy_tweak()?;
@@ -197,10 +465,104 @@ pub mod button;
 pub mod switch;
 
 /// Enum representing the different widget types for a tweak.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TweakWidget {
     Switch(ToggleSwitch),
     Button(ApplyButton),
+}
+```
+
+```rust
+// src/widgets/button.rs
+
+use egui::{self, Color32, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
+
+const DEFAULT_TEXT: &str = "Apply";
+const IN_PROGRESS_TEXT: &str = "Applying...";
+const COMPLETED_TEXT: &str = "Done";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonState {
+    Default,
+    InProgress,
+    Completed,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApplyButton {
+    pub state: ButtonState,
+    fill: Color32,
+    stroke: Stroke,
+    rounding: Rounding,
+    min_size: Vec2,
+}
+
+impl Default for ApplyButton {
+    fn default() -> Self {
+        Self::new(ButtonState::Default)
+    }
+}
+
+impl ApplyButton {
+    pub fn new(state: ButtonState) -> Self {
+        Self {
+            state,
+            fill: Color32::from_rgb(100, 150, 250),
+            stroke: Stroke::new(1.0, Color32::BLACK),
+            rounding: Rounding::same(5.0),
+            min_size: Vec2::new(100.0, 30.0),
+        }
+    }
+}
+
+impl Widget for ApplyButton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let label = match self.state {
+            ButtonState::Default => DEFAULT_TEXT,
+            ButtonState::InProgress => IN_PROGRESS_TEXT,
+            ButtonState::Completed => COMPLETED_TEXT,
+        };
+
+        let is_clickable = matches!(self.state, ButtonState::Default);
+
+        let sense = if is_clickable {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+
+        let (rect, mut response) = ui.allocate_exact_size(self.min_size, sense);
+
+        if is_clickable && response.clicked() {
+            response.mark_changed();
+        }
+
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), false, label)
+        });
+
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact(&response);
+
+            // Draw the button background
+            ui.painter().rect_filled(rect, self.rounding, self.fill);
+            ui.painter().rect_stroke(rect, self.rounding, self.stroke);
+
+            // Center the text
+            let galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    label.to_string(),
+                    egui::FontId::default(),
+                    visuals.text_color(),
+                )
+            });
+
+            let text_pos = rect.center() - galley.size() / 2.0;
+            ui.painter().galley(text_pos, galley, visuals.text_color());
+        }
+
+        response
+    }
 }
 ```
 
@@ -209,7 +571,6 @@ pub enum TweakWidget {
 
 use egui::{self, Color32, Pos2, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
 
-/// Enum representing the state of the ToggleSwitch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToggleSwitchState {
     Off,
@@ -217,8 +578,7 @@ pub enum ToggleSwitchState {
     On,
 }
 
-/// Custom toggle switch widget with state enum.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ToggleSwitch {
     pub state: ToggleSwitchState,
     stroke_color: Stroke,
@@ -226,57 +586,51 @@ pub struct ToggleSwitch {
     min_size: Vec2,
 }
 
+impl Default for ToggleSwitch {
+    fn default() -> Self {
+        Self::new(ToggleSwitchState::Off)
+    }
+}
+
 impl ToggleSwitch {
-    /// Creates a new `ToggleSwitch` with the given tweak reference.
-    pub fn new() -> Self {
+    pub fn new(state: ToggleSwitchState) -> Self {
         Self {
-            state: ToggleSwitchState::Off,
+            state,
             stroke_color: Stroke::new(1.0, Color32::BLACK),
-            rounding: Rounding::same(5.0),
+            rounding: Rounding::same(15.0),
             min_size: Vec2::new(60.0, 30.0),
         }
     }
 
     pub fn fill_color(&self) -> Color32 {
         match self.state {
-            ToggleSwitchState::Off => Color32::from_rgb(200, 200, 200), // Light Gray
-            ToggleSwitchState::InProgress => Color32::from_rgb(100, 150, 250), // Blue
-            ToggleSwitchState::On => Color32::from_rgb(100, 200, 100),  // Green
+            ToggleSwitchState::Off => Color32::from_rgb(200, 200, 200),
+            ToggleSwitchState::InProgress => Color32::from_rgb(100, 150, 250),
+            ToggleSwitchState::On => Color32::from_rgb(100, 200, 100),
         }
     }
 }
 
 impl Widget for ToggleSwitch {
     fn ui(self, ui: &mut Ui) -> Response {
-        // Determine if the switch should be interactive
-        let is_clickable = matches!(self.state, ToggleSwitchState::Off);
+        let is_clickable = matches!(self.state, ToggleSwitchState::Off | ToggleSwitchState::On);
 
-        // Set the sense based on interactivity
         let sense = if is_clickable {
             Sense::click()
         } else {
             Sense::hover()
         };
 
-        // Allocate space for the switch
         let (rect, mut response) = ui.allocate_exact_size(self.min_size, sense);
 
-        // If the switch is clickable and was clicked, update the state
         if is_clickable && response.clicked() {
             response.mark_changed();
         }
 
-        // Attach meta-data for accessibility
-        response.widget_info(|| match self.state {
-            ToggleSwitchState::Off => {
-                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), false, "")
-            }
-            ToggleSwitchState::InProgress | ToggleSwitchState::On => {
-                egui::WidgetInfo::new(egui::WidgetType::Button)
-            }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), false, "")
         });
 
-        // Paint the switch
         if ui.is_rect_visible(rect) {
             let visuals = ui.style().interact(&response);
             let expanded_rect = rect.expand(visuals.expansion);
@@ -290,142 +644,19 @@ impl Widget for ToggleSwitch {
                 self.stroke_color,
             );
 
-            // Determine the position of the toggle circle based on state
+            // Position of the toggle circle
             let circle_pos = match self.state {
-                ToggleSwitchState::Off => {
-                    // Left side
-                    Pos2::new(rect.left() + radius, rect.center().y)
-                }
-                ToggleSwitchState::InProgress => {
-                    // Center position to indicate ongoing action
-                    Pos2::new(rect.center().x, rect.center().y)
-                }
-                ToggleSwitchState::On => {
-                    // Right side
-                    Pos2::new(rect.right() - radius, rect.center().y)
-                }
+                ToggleSwitchState::Off => Pos2::new(rect.left() + radius, rect.center().y),
+                ToggleSwitchState::InProgress => rect.center(),
+                ToggleSwitchState::On => Pos2::new(rect.right() - radius, rect.center().y),
             };
 
-            // Choose circle fill color based on state
+            // Circle fill color
             let circle_fill = Color32::WHITE;
 
             // Draw the toggle circle
             ui.painter()
                 .circle(circle_pos, 0.75 * radius, circle_fill, visuals.fg_stroke);
-        }
-
-        response
-    }
-}
-```
-
-```rust
-// src/widgets/button.rs
-
-use egui::{self, Color32, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
-
-const DEFAULT_TEXT: &str = "Apply";
-const IN_PROGRESS_TEXT: &str = "In Progress";
-const COMPLETED_TEXT: &str = "Done";
-
-/// Enum representing the three states of the `ThreeStateButton`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ButtonState {
-    /// The button is in its default state and is clickable.
-    Default,
-    /// The button is currently processing an action and is not clickable.
-    InProgress,
-    /// The action has been completed, and the button is not clickable.
-    Completed,
-}
-
-#[derive(Debug)]
-pub struct ApplyButton {
-    /// Mutable reference to the button's current state.
-    pub state: ButtonState,
-    fill: Color32,
-    stroke: Stroke,
-    rounding: Rounding,
-    min_size: Vec2,
-}
-
-impl ApplyButton {
-    /// Creates a new `ThreeStateButton` with the given state reference.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - A mutable reference to the button's current state.
-    pub fn new() -> Self {
-        Self {
-            state: ButtonState::Default,
-            fill: Color32::from_rgb(100, 150, 250),
-            stroke: Stroke::new(1.0, Color32::BLACK),
-            rounding: Rounding::same(5.0),
-            min_size: Vec2::new(100.0, 30.0),
-        }
-    }
-}
-
-impl Widget for ApplyButton {
-    fn ui(self, ui: &mut Ui) -> Response {
-        // Determine the label based on the current state
-        let label = match self.state {
-            ButtonState::Default => DEFAULT_TEXT,
-            ButtonState::InProgress => IN_PROGRESS_TEXT,
-            ButtonState::Completed => COMPLETED_TEXT,
-        };
-
-        // Determine if the button should be interactive
-        let is_clickable = matches!(self.state, ButtonState::Default);
-
-        // Set the sense based on interactivity
-        let sense = if is_clickable {
-            Sense::click()
-        } else {
-            Sense::hover()
-        };
-
-        // Allocate space for the button
-        let (rect, response) = ui.allocate_exact_size(self.min_size, sense);
-
-        // If the button is clickable and was clicked, emit a response
-        if is_clickable && response.clicked() {
-            // Toggle state if necessary outside of this widget
-            // Here, state changes are handled externally
-            // Optionally, you can handle state changes here as well
-        }
-
-        // Attach meta-data for accessibility
-        response.widget_info(|| match self.state {
-            ButtonState::Default => {
-                egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), false, "")
-            }
-            ButtonState::InProgress | ButtonState::Completed => {
-                egui::WidgetInfo::new(egui::WidgetType::Button)
-            }
-        });
-
-        // Paint the button
-        if ui.is_rect_visible(rect) {
-            let visuals = ui.style().interact(&response);
-
-            // Draw the button background
-            ui.painter().rect_filled(rect, self.rounding, self.fill);
-            ui.painter().rect_stroke(rect, self.rounding, self.stroke);
-
-            // Calculate the position to center the text
-            let galley = ui.fonts(|f| {
-                f.layout_no_wrap(
-                    label.to_string(), // Convert &str to String
-                    egui::FontId::default(),
-                    visuals.text_color(),
-                )
-            });
-
-            let text_pos = rect.center() - galley.size() / 2.0;
-
-            // Paint the galley with a fallback color (transparent if not needed)
-            ui.painter().galley(text_pos, galley, Color32::TRANSPARENT);
         }
 
         response
@@ -447,7 +678,7 @@ use powershell_tweaks::{initialize_powershell_tweaks, PowershellTweak};
 use registry_tweaks::{initialize_registry_tweaks, RegistryTweak};
 
 use crate::{
-    models::Tweak,
+    actions::Tweak,
     widgets::{button::ApplyButton, switch::ToggleSwitch, TweakWidget},
 };
 
@@ -455,32 +686,47 @@ use crate::{
 /// - `Registry`: Modifies Windows Registry keys.
 /// - `GroupPolicy`: Adjusts Group Policy settings.
 /// - `Command`: Executes PowerShell or other scripts.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum TweakMethod {
     Registry(RegistryTweak),
     GroupPolicy(GroupPolicyTweak),
     Powershell(PowershellTweak),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TweakId {
+    LargeSystemCache,
+    SystemResponsiveness,
+    DisableHWAcceleration,
+    Win32PrioritySeparation,
+    DisableLowDiskCheck,
+    DisableCoreParking,
+    ProcessIdleTasks,
+    SeLockMemoryPrivilege,
+    UltimatePerformancePlan,
+}
+
 pub fn add_tweak(
+    id: TweakId,
     name: String,
     description: String,
     method: TweakMethod,
     requires_restart: bool,
 ) -> Arc<Mutex<Tweak>> {
     let widget = match &method {
-        TweakMethod::Registry(_) => TweakWidget::Switch(ToggleSwitch::new()),
-        TweakMethod::GroupPolicy(_) => TweakWidget::Switch(ToggleSwitch::new()),
+        TweakMethod::Registry(_) => TweakWidget::Switch(ToggleSwitch::default()),
+        TweakMethod::GroupPolicy(_) => TweakWidget::Switch(ToggleSwitch::default()),
         TweakMethod::Powershell(tweak) => {
             if tweak.undo_script.is_some() {
-                TweakWidget::Button(ApplyButton::new())
+                TweakWidget::Switch(ToggleSwitch::default())
             } else {
-                TweakWidget::Switch(ToggleSwitch::new())
+                TweakWidget::Button(ApplyButton::default())
             }
         }
     };
 
     Arc::new(Mutex::new(Tweak::new(
+        id,
         name,
         description,
         method,
@@ -501,9 +747,732 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
 }
 ```
 
-The program should work as follows:
+```rust
+// src/tweaks/registry_tweaks.rs
 
-1. On initialization, the default state of all tweaks should be retrieved and displayed.
-2. When a tweak is clicked, it's widget should be updated to reflect the in-progress state, and the tweak is added to a queue and executed in the background.
-3. If the tweak is successfully applied or reverted, it is removed from the queue, its `enabled` field is updated, and the widget is updated to reflect the new state.
-4. If the tweak fails to apply or revert, the widget should be returned to its previous state, and an error message should be displayed to the user.
+use std::sync::{Arc, Mutex};
+
+use winreg::{
+    enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
+    RegKey,
+};
+
+use super::TweakMethod;
+use crate::{
+    actions::Tweak,
+    errors::RegistryError,
+    tweaks::{add_tweak, TweakId},
+};
+
+/// Represents a registry tweak, including the registry key, value name, desired value, and default value.
+#[derive(Clone, Debug)]
+pub struct RegistryTweak {
+    /// Full path of the registry key (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
+    pub key: String,
+    /// Name of the registry value to modify.
+    pub name: String,
+    /// The value to set when applying the tweak.
+    pub tweak_value: RegistryKeyValue,
+    /// The default value to revert to when undoing the tweak.
+    pub default_value: RegistryKeyValue,
+}
+
+/// Enumeration of supported registry key value types.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RegistryKeyValue {
+    String(String),
+    Dword(u32),
+    // Add other types as needed (e.g., Qword, Binary, etc.)
+}
+
+impl RegistryTweak {
+    /// Checks if the tweak is currently enabled by comparing the current value to the default value.
+    /// If the current value matches the default value, the tweak is considered enabled.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the operation succeeds and the tweak is enabled.
+    /// - `Ok(false)` if the operation succeeds and the tweak is disabled.
+    pub fn is_registry_tweak_enabled(&self) -> Result<bool, RegistryError> {
+        match self.read_current_value() {
+            Ok(current_value) => Ok(current_value == self.default_value),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to read current value for tweak '{}': {}",
+                    self.name,
+                    e
+                );
+                Ok(false)
+            }
+        }
+    }
+    /// Reads the current value of the specified registry key.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(RegistryKeyValue)` with the current value.
+    /// - `Err(RegistryTweakError)` if the operation fails.
+    pub fn read_current_value(&self) -> Result<RegistryKeyValue, RegistryError> {
+        // Extract the hive from the key path (e.g., "HKEY_LOCAL_MACHINE")
+        let hive = self
+            .key
+            .split('\\')
+            .next()
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+
+        // Map the hive string to the corresponding RegKey
+        let hkey = match hive {
+            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
+            other => return Err(RegistryError::UnsupportedHive(other.to_string())),
+        };
+
+        // Extract the subkey path (everything after the hive)
+        let subkey_path = self
+            .key
+            .split_once('\\')
+            .map(|(_, path)| path)
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+
+        // Attempt to open the subkey with read permissions
+        let subkey = hkey
+            .open_subkey_with_flags(subkey_path, KEY_READ)
+            .map_err(|e| {
+                RegistryError::KeyOpenError(format!(
+                    "Failed to open registry key '{}': {}",
+                    self.key, e
+                ))
+            })?;
+
+        // Depending on the expected type, read the value
+        match &self.tweak_value {
+            RegistryKeyValue::String(_) => {
+                let val: String = subkey.get_value(&self.name).map_err(|e| {
+                    RegistryError::ReadValueError(format!(
+                        "Failed to read string value '{:.?}': {:.?}",
+                        self.tweak_value, e
+                    ))
+                })?;
+                Ok(RegistryKeyValue::String(val))
+            }
+            RegistryKeyValue::Dword(_) => {
+                let val: u32 = subkey.get_value(&self.name).map_err(|e| {
+                    RegistryError::ReadValueError(format!(
+                        "Failed to read DWORD value '{:.?}': {:.?}",
+                        self.tweak_value, e
+                    ))
+                })?;
+                Ok(RegistryKeyValue::Dword(val))
+            }
+        }
+    }
+
+    /// Applies the registry tweak by setting the specified registry value.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(RegistryTweakError)` if the operation fails.
+    pub fn apply_registry_tweak(&self) -> Result<(), RegistryError> {
+        // Extract the hive from the key path
+        let hive = self
+            .key
+            .split('\\')
+            .next()
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+
+        // Map the hive string to the corresponding RegKey
+        let hkey = match hive {
+            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
+            other => return Err(RegistryError::UnsupportedHive(other.to_string())),
+        };
+
+        // Extract the subkey path
+        let subkey_path = self
+            .key
+            .split_once('\\')
+            .map(|(_, path)| path)
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+
+        // Attempt to open the subkey with read and write permissions
+        // If it doesn't exist, attempt to create it
+        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_READ | KEY_WRITE) {
+            Ok(key) => key, // Subkey exists and is opened successfully
+            Err(_) => {
+                // Subkey does not exist; attempt to create it
+                match hkey.create_subkey(subkey_path) {
+                    Ok((key, disposition)) => {
+                        // Log whether the key was created or already existed
+                        match disposition {
+                            winreg::enums::RegDisposition::REG_CREATED_NEW_KEY => {
+                                tracing::debug!("Created new registry key: {}", self.key);
+                            }
+                            winreg::enums::RegDisposition::REG_OPENED_EXISTING_KEY => {
+                                tracing::debug!("Opened existing registry key: {}", self.key);
+                            }
+                        }
+                        key
+                    }
+                    Err(e) => {
+                        return Err(RegistryError::CreateError(format!(
+                            "Failed to create registry key '{:?}': {:?}",
+                            self.key, e
+                        )))
+                    }
+                }
+            }
+        };
+
+        // Now, set the registry value based on its type
+        match &self.tweak_value {
+            RegistryKeyValue::String(val) => {
+                subkey.set_value(&self.name, val).map_err(|e| {
+                    RegistryError::SetValueError(format!(
+                        "Failed to set string value '{:?}' in key '{:?}': {:?}",
+                        self.name, self.key, e
+                    ))
+                })?;
+                tracing::debug!(
+                    "Set string value '{:.?}' to '{:.?}' in key '{:.?}'",
+                    self.tweak_value,
+                    val,
+                    self.key
+                );
+            }
+            RegistryKeyValue::Dword(val) => {
+                subkey.set_value(&self.name, val).map_err(|e| {
+                    RegistryError::SetValueError(format!(
+                        "Failed to set DWORD value '{:?}' in key '{:?}': {:?}",
+                        self.name, self.key, e
+                    ))
+                })?;
+                tracing::debug!(
+                    "Set DWORD value '{:.?}' to '{:.?}' in key '{:.?}'",
+                    self.tweak_value,
+                    val,
+                    self.key
+                );
+            } // Handle other types as needed
+        }
+
+        Ok(())
+    }
+
+    /// Reverts the registry tweak by restoring the default registry value.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(RegistryTweakError)` if the operation fails.
+    pub fn revert_registry_tweak(&self) -> Result<(), RegistryError> {
+        let hive = self
+            .key
+            .split('\\')
+            .next()
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+        let hkey = match hive {
+            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
+            other => return Err(RegistryError::UnsupportedHive(other.to_string())),
+        };
+
+        let subkey_path = self
+            .key
+            .split_once('\\')
+            .map(|(_, path)| path)
+            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.key.clone()))?;
+
+        // Open the subkey with write permissions to modify the value
+        let subkey = hkey
+            .open_subkey_with_flags(subkey_path, KEY_WRITE)
+            .map_err(|e| {
+                RegistryError::KeyOpenError(format!(
+                    "Failed to open registry key '{}': {}",
+                    self.key, e
+                ))
+            })?;
+
+        // Set the registry value back to its default
+        match &self.default_value {
+            RegistryKeyValue::String(val) => subkey
+                .set_value(&self.name, val)
+                .map_err(|e| RegistryError::SetValueError(e.to_string())),
+            RegistryKeyValue::Dword(val) => subkey
+                .set_value(&self.name, val)
+                .map_err(|e| RegistryError::SetValueError(e.to_string())),
+            // Handle other types as needed
+        }
+    }
+}
+
+pub fn initialize_registry_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+    vec![
+       add_tweak(
+        TweakId::LargeSystemCache,
+        "LargeSystemCache".to_string(),
+        "Optimizes system memory management by adjusting the LargeSystemCache setting.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            key: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
+            name: "LargeSystemCache".to_string(),
+            // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Windows will favor foreground applications in terms of memory allocation.
+            default_value: RegistryKeyValue::Dword(0),
+        }),
+        false // requires_restart
+       ),
+       add_tweak(
+        TweakId::SystemResponsiveness,
+          "SystemResponsiveness".to_string(),
+          "Optimizes system responsiveness by adjusting the SystemResponsiveness setting.".to_string(),
+          TweakMethod::Registry(RegistryTweak {
+                key: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile".to_string(),
+                name: "SystemResponsiveness".to_string(),
+                // Windows will favor foreground applications in terms of resource allocation.
+                tweak_value: RegistryKeyValue::Dword(0),
+                // Windows will favor background services in terms of resource allocation.
+                default_value: RegistryKeyValue::Dword(20),
+          }),
+          false // requires_restart
+         ),
+         add_tweak(
+            TweakId::DisableHWAcceleration,
+            "DisableHWAcceleration".to_string(),
+            "Disables hardware acceleration for the current user.".to_string(),
+            TweakMethod::Registry(RegistryTweak {
+                    key: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
+                    name: "DisableHWAcceleration".to_string(),
+                    // Hardware acceleration is disabled.
+                    tweak_value: RegistryKeyValue::Dword(1),
+                    // Hardware acceleration is enabled.
+                    default_value: RegistryKeyValue::Dword(0),
+            }),
+            false // requires_restart
+            ),
+            add_tweak(
+            TweakId::Win32PrioritySeparation,
+            "Win32PrioritySeparation".to_string(),
+            "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting.".to_string(),
+            TweakMethod::Registry(RegistryTweak {
+                    key: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\PriorityControl".to_string(),
+                    name: "Win32PrioritySeparation".to_string(),
+                    // Foreground applications will receive priority over background services.
+                    tweak_value: RegistryKeyValue::Dword(26),
+                    // Background services will receive priority over foreground applications.
+                    default_value: RegistryKeyValue::Dword(2),
+            }),
+            false // requires_restart
+            ),
+            add_tweak(
+                TweakId::DisableLowDiskCheck,
+                "DisableLowDiskCheck".to_string(),
+                "Disables the low disk space check for the current user.".to_string(),
+                TweakMethod::Registry(RegistryTweak {
+                key: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
+                name: "NoLowDiskSpaceChecks".to_string(),
+                // Low disk space check is disabled.
+                tweak_value: RegistryKeyValue::Dword(1),
+                // Low disk space check is enabled.
+                default_value: RegistryKeyValue::Dword(0),
+                }),
+                false // requires_restart
+            ),
+            add_tweak(
+                TweakId::DisableCoreParking,
+                "DisableCoreParking".to_string(),
+                "Disables core parking to improve system performance.".to_string(),
+                TweakMethod::Registry(RegistryTweak {
+                key: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
+                name: "ValueMax".to_string(),
+                // Core parking is disabled.
+                tweak_value: RegistryKeyValue::Dword(0),
+                // Core parking is enabled.
+                default_value: RegistryKeyValue::Dword(64),
+                }),
+                true // requires_restart
+            ),
+            ]
+}
+```
+
+```rust
+// src/tweaks/group_policy_tweaks.rs
+use std::{
+    ptr,
+    sync::{Arc, Mutex},
+};
+
+use windows::{
+    core::{PCWSTR, PWSTR},
+    Win32::{
+        Foundation::{GetLastError, NTSTATUS, STATUS_OBJECT_NAME_NOT_FOUND},
+        Security::{
+            Authentication::Identity::{
+                LsaAddAccountRights, LsaClose, LsaEnumerateAccountRights, LsaFreeMemory,
+                LsaNtStatusToWinError, LsaOpenPolicy, LsaRemoveAccountRights, LSA_HANDLE,
+                LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING,
+            },
+            LookupAccountNameW, PSID, SID_NAME_USE,
+        },
+    },
+};
+
+use super::TweakMethod;
+use crate::{
+    actions::Tweak,
+    errors::GroupPolicyError,
+    tweaks::{add_tweak, TweakId},
+};
+
+/// Group Policy related constants.
+pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
+pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
+
+/// Represents a Group Policy tweak, including the policy key, desired value, and default value.
+#[derive(Clone, Debug)]
+pub struct GroupPolicyTweak {
+    /// The policy key (e.g., "SeLockMemoryPrivilege").
+    pub key: String,
+    /// The desired value for the policy.
+    pub value: GroupPolicyValue,
+    /// The default value for the policy.
+    pub default_value: GroupPolicyValue,
+}
+
+/// Enumeration of possible Group Policy values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GroupPolicyValue {
+    Enabled,
+    Disabled,
+}
+
+impl GroupPolicyTweak {
+    /// Checks if the tweak is currently enabled by comparing the current value to the default value.
+    /// If the current value matches the default value, the tweak is considered enabled.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the operation succeeds and the tweak is enabled.
+    /// - `Ok(false)` if the operation succeeds and the tweak is disabled.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn is_group_policy_tweak_enabled(&self) -> Result<bool, GroupPolicyError> {
+        match self.read_current_value() {
+            Ok(value) => Ok(value == self.value),
+            Err(e) => {
+                tracing::error!("Failed to read current value: {:?}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Reads the current value of the Group Policy tweak.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(GroupPolicyValue)` indicating if the policy is enabled or disabled.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn read_current_value(&self) -> Result<GroupPolicyValue, GroupPolicyError> {
+        unsafe {
+            // Initialize object attributes for LsaOpenPolicy
+            let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
+            // Initialize the policy handle to zero to avoid using uninitialized memory
+            let mut policy_handle = LSA_HANDLE(0);
+            // Define the desired access rights for the policy object handle (read-only)
+            let desired_access = POLICY_LOOKUP_NAMES;
+            // Call LsaOpenPolicy to get a handle to the policy object
+            let status =
+                LsaOpenPolicy(None, &object_attributes, desired_access, &mut policy_handle);
+            // Check the return value of LsaOpenPolicy
+            if status != NTSTATUS(0) {
+                let win_err = LsaNtStatusToWinError(status);
+                return Err(GroupPolicyError::KeyOpenError(format!(
+                    "LsaOpenPolicy failed with error code: {}",
+                    win_err
+                )));
+            }
+
+            // Ensure the policy handle is closed properly
+            let _policy_guard = LsaHandleGuard {
+                handle: policy_handle,
+            };
+
+            // Get the SID for the current user to enumerate account rights
+            let mut sid_size = 0u32;
+            let mut domain_name_size = 0u32;
+            let mut sid_name_use = SID_NAME_USE(0);
+
+            let user_name = whoami::username();
+            tracing::debug!("Current user: {}", user_name);
+            let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
+
+            // First call to LookupAccountNameW to get buffer sizes
+            let lookup_result = LookupAccountNameW(
+                PCWSTR(ptr::null()),
+                PCWSTR(user_name_wide.as_ptr()),
+                PSID(ptr::null_mut()),
+                &mut sid_size,
+                PWSTR(ptr::null_mut()),
+                &mut domain_name_size,
+                &mut sid_name_use as *mut _,
+            );
+
+            // Check if the function call failed due to insufficient buffer
+            if lookup_result.is_ok() || GetLastError().0 != 122 {
+                // 122 is ERROR_INSUFFICIENT_BUFFER
+                return Err(GroupPolicyError::KeyOpenError(format!(
+                    "LookupAccountNameW failed to get buffer sizes. Error code: {}",
+                    GetLastError().0
+                )));
+            }
+
+            let mut sid_buffer = vec![0u8; sid_size as usize];
+            let sid = PSID(sid_buffer.as_mut_ptr() as *mut _);
+
+            let mut domain_name_buffer = vec![0u16; domain_name_size as usize];
+
+            // Second call to LookupAccountNameW to get the actual data
+            let lookup_result = LookupAccountNameW(
+                PCWSTR(ptr::null()),
+                PCWSTR(user_name_wide.as_ptr()),
+                sid,
+                &mut sid_size,
+                PWSTR(domain_name_buffer.as_mut_ptr()),
+                &mut domain_name_size,
+                &mut sid_name_use as *mut _,
+            );
+
+            // Check the return value of LookupAccountNameW
+            if lookup_result.is_ok() {
+                let error_code = GetLastError();
+                return Err(GroupPolicyError::KeyOpenError(format!(
+                    "LookupAccountNameW failed. Error code: {}",
+                    error_code.0
+                )));
+            }
+
+            // Prepare to enumerate account rights
+            let mut rights_ptr: *mut LSA_UNICODE_STRING = ptr::null_mut();
+            let mut rights_count: u32 = 0;
+
+            // Call LsaEnumerateAccountRights to get the rights assigned to the SID
+            let status =
+                LsaEnumerateAccountRights(policy_handle, sid, &mut rights_ptr, &mut rights_count);
+
+            if status == NTSTATUS(0) {
+                // Create a slice from the returned rights
+                let rights_slice = std::slice::from_raw_parts(rights_ptr, rights_count as usize);
+
+                let privilege_wide: Vec<u16> = self.key.encode_utf16().collect();
+
+                // Check if the privilege is present in the user's rights
+                let has_privilege = rights_slice.iter().any(|right| {
+                    let right_str =
+                        std::slice::from_raw_parts(right.Buffer.0, (right.Length / 2) as usize);
+                    right_str == privilege_wide.as_slice()
+                });
+
+                // Free the memory allocated by LsaEnumerateAccountRights
+                let free_status = LsaFreeMemory(Some(rights_ptr as *mut _));
+                if free_status != NTSTATUS(0) {
+                    tracing::debug!(
+                        "LsaFreeMemory failed with error code: {}",
+                        LsaNtStatusToWinError(free_status)
+                    );
+                }
+
+                if has_privilege {
+                    Ok(GroupPolicyValue::Enabled)
+                } else {
+                    Ok(GroupPolicyValue::Disabled)
+                }
+            } else if status == STATUS_OBJECT_NAME_NOT_FOUND {
+                // The account has no rights assigned
+                Ok(GroupPolicyValue::Disabled)
+            } else {
+                let win_err = LsaNtStatusToWinError(status);
+                Err(GroupPolicyError::ReadValueError(format!(
+                    "LsaEnumerateAccountRights failed with error code: {}",
+                    win_err
+                )))
+            }
+        }
+    }
+
+    /// Applies the Group Policy tweak by assigning the specified privilege to the current user.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn apply_group_policy_tweak(&self) -> Result<(), GroupPolicyError> {
+        // Assign the privilege to the current user
+        self.modify_user_rights(&self.key, true)
+    }
+
+    /// Reverts the Group Policy tweak by removing the specified privilege from the current user.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    pub fn revert_group_policy_tweak(&self) -> Result<(), GroupPolicyError> {
+        // Remove the privilege from the current user
+        self.modify_user_rights(&self.key, false)
+    }
+
+    /// Modifies user rights by adding or removing a specified privilege.
+    ///
+    /// # Parameters
+    ///
+    /// - `privilege`: The privilege to add or remove.
+    /// - `enable`: If `true`, adds the privilege; if `false`, removes it.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the operation succeeds.
+    /// - `Err(GroupPolicyTweakError)` if the operation fails.
+    fn modify_user_rights(&self, privilege: &str, enable: bool) -> Result<(), GroupPolicyError> {
+        unsafe {
+            let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
+
+            let mut policy_handle: LSA_HANDLE = LSA_HANDLE(0);
+
+            let desired_access = POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES;
+
+            // Open the policy with the desired access
+            let status =
+                LsaOpenPolicy(None, &object_attributes, desired_access, &mut policy_handle);
+            if status != NTSTATUS(0) {
+                let win_err = LsaNtStatusToWinError(status);
+                return Err(GroupPolicyError::KeyOpenError(format!(
+                    "LsaOpenPolicy failed with error code: {}",
+                    win_err
+                )));
+            }
+
+            // Ensure the policy handle is closed properly
+            let _policy_guard = LsaHandleGuard {
+                handle: policy_handle,
+            };
+
+            let mut sid_size = 0u32;
+            let mut domain_name_size = 0u32;
+            let mut sid_name_use = SID_NAME_USE(0);
+
+            let user_name = whoami::username();
+            tracing::debug!("Current user: {}", user_name);
+            let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
+
+            // First call to get buffer sizes
+            let _ = LookupAccountNameW(
+                PCWSTR(ptr::null()),
+                PCWSTR(user_name_wide.as_ptr()),
+                PSID(ptr::null_mut()),
+                &mut sid_size,
+                PWSTR(ptr::null_mut()),
+                &mut domain_name_size,
+                &mut sid_name_use as *mut _,
+            );
+
+            let mut sid_buffer = vec![0u8; sid_size as usize];
+            let sid = PSID(sid_buffer.as_mut_ptr() as *mut _);
+
+            let mut domain_name_buffer = vec![0u16; domain_name_size as usize];
+
+            // Second call to get actual data
+            if LookupAccountNameW(
+                PCWSTR(ptr::null()),
+                PCWSTR(user_name_wide.as_ptr()),
+                sid,
+                &mut sid_size,
+                PWSTR(domain_name_buffer.as_mut_ptr()),
+                &mut domain_name_size,
+                &mut sid_name_use as *mut _,
+            )
+            .is_ok()
+            {
+                let privilege_wide: Vec<u16> = privilege.encode_utf16().collect();
+
+                let privilege_lsa_string = LSA_UNICODE_STRING {
+                    Length: (privilege_wide.len() * 2) as u16,
+                    MaximumLength: (privilege_wide.len() * 2) as u16,
+                    Buffer: PWSTR(privilege_wide.as_ptr() as *mut _),
+                };
+
+                let user_rights = [privilege_lsa_string];
+
+                if enable {
+                    // Add the privilege to the user
+                    let status = LsaAddAccountRights(policy_handle, sid, &user_rights);
+                    if status != NTSTATUS(0) {
+                        let win_err = LsaNtStatusToWinError(status);
+                        return Err(GroupPolicyError::SetValueError(format!(
+                            "LsaAddAccountRights failed with error code: {}",
+                            win_err
+                        )));
+                    }
+                } else {
+                    // Remove the privilege from the user
+                    let status =
+                        LsaRemoveAccountRights(policy_handle, sid, false, Some(&user_rights));
+                    if status != NTSTATUS(0) {
+                        let win_err = LsaNtStatusToWinError(status);
+                        // Treat error code 2 (ERROR_FILE_NOT_FOUND) as success
+                        if win_err != 2 {
+                            return Err(GroupPolicyError::SetValueError(format!(
+                                "LsaRemoveAccountRights failed with error code: {}",
+                                win_err
+                            )));
+                        } else {
+                            // Privilege was not assigned, so we can consider it already removed
+                            tracing::debug!(
+                                "Privilege '{}' was not assigned to the user; nothing to remove.",
+                                privilege
+                            );
+                        }
+                    }
+                }
+
+                Ok(())
+            } else {
+                let error_code = GetLastError();
+                Err(GroupPolicyError::KeyOpenError(format!(
+                    "LookupAccountNameW failed. Error code: {}",
+                    error_code.0
+                )))
+            }
+        }
+    }
+}
+
+pub struct LsaHandleGuard {
+    pub handle: LSA_HANDLE,
+}
+
+impl Drop for LsaHandleGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let status = LsaClose(self.handle);
+            if status != NTSTATUS(0) {
+                tracing::error!(
+                    "LsaClose failed with error code: {}",
+                    LsaNtStatusToWinError(status)
+                );
+            }
+        }
+    }
+}
+
+pub fn initialize_group_policy_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+    vec![add_tweak(
+        TweakId::SeLockMemoryPrivilege,      // id
+        "SeLockMemoryPrivilege".to_string(), // display name
+        "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(), // description
+        TweakMethod::GroupPolicy(GroupPolicyTweak {
+            key: "SeLockMemoryPrivilege".to_string(),
+            value: GroupPolicyValue::Enabled,
+            default_value: GroupPolicyValue::Disabled,
+        }),
+        true, // requires restart
+    )]
+}
+```

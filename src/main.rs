@@ -6,14 +6,12 @@ mod tweaks;
 mod widgets;
 mod worker;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic, Arc, Mutex};
 
-use actions::{Tweak, TweakAction};
-use chrono::Local;
+use actions::Tweak;
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::Widget;
-use fern::Dispatch;
-use log::LevelFilter;
+use tracing_subscriber;
 use widgets::{button::ButtonState, switch::ToggleSwitchState};
 
 use crate::{
@@ -23,25 +21,6 @@ use crate::{
     worker::{TweakExecutor, WorkerMessage, WorkerResult},
 };
 
-// Setting up logging using fern
-fn setup_logging() {
-    Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{} [{}][{}] {}",
-                Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(LevelFilter::Info)
-        .chain(std::io::stdout())
-        .chain(fern::log_file("app.log").unwrap())
-        .apply()
-        .unwrap();
-}
-
 struct MyApp {
     tweaks: Vec<Arc<Mutex<Tweak>>>,
     executor: TweakExecutor,
@@ -49,13 +28,12 @@ struct MyApp {
 
 impl MyApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        // Initialize logging
-        setup_logging();
-
         // Initialize tweaks
+        tracing::info!("Initializing tweaks...");
         let tweaks = initialize_all_tweaks();
 
         // Initialize tweak executor
+        tracing::info!("Initializing tweak executor...");
         let executor = TweakExecutor::new();
 
         // Optionally, you can load tweak statuses from persisted state here
@@ -92,7 +70,9 @@ impl App for MyApp {
             ui.separator();
 
             for tweak_arc in &self.tweaks {
-                let tweak = &*tweak_arc.lock().unwrap();
+                // Clone necessary data to avoid holding the lock during UI operations
+                let tweak = tweak_arc.lock().unwrap().clone();
+
                 ui.horizontal(|ui| {
                     // Tweak Information
                     ui.vertical(|ui| {
@@ -103,10 +83,9 @@ impl App for MyApp {
                     // Tweak Widget
                     match tweak.widget {
                         TweakWidget::Switch(_) => {
-                            let is_enabled = tweak.clone().is_enabled().unwrap_or(false);
                             let current_state = match &tweak.status {
                                 TweakStatus::Idle => {
-                                    if is_enabled {
+                                    if tweak.enabled.load(atomic::Ordering::SeqCst) {
                                         ToggleSwitchState::On
                                     } else {
                                         ToggleSwitchState::Off
@@ -120,22 +99,29 @@ impl App for MyApp {
 
                             if response.clicked() && current_state != ToggleSwitchState::InProgress
                             {
-                                // Update status to Applying
-                                if let Some(tweak_arc) = self
-                                    .tweaks
-                                    .iter()
-                                    .find(|t| t.lock().unwrap().id == tweak.id)
+                                // Clone the Arc to move into the closure
+                                let tweak_to_modify = tweak_arc.clone();
+
+                                // Update status to Applying without holding the lock during UI closure
                                 {
-                                    let mut tweak_locked = tweak_arc.lock().unwrap();
+                                    let mut tweak_locked = tweak_to_modify.lock().unwrap();
                                     tweak_locked.status = TweakStatus::Applying;
                                 }
 
                                 // Send tweak to executor
                                 let is_toggle = true;
-                                let _ = self.executor.sender.send(WorkerMessage::ExecuteTweak {
-                                    tweak: tweak_arc.clone(),
-                                    is_toggle,
-                                });
+                                if let Err(e) =
+                                    self.executor.sender.send(WorkerMessage::ExecuteTweak {
+                                        tweak: tweak_to_modify.clone(),
+                                        is_toggle,
+                                    })
+                                {
+                                    tracing::error!("Failed to send ExecuteTweak message: {}", e);
+                                    // Optionally, revert the status or notify the user
+                                    let mut tweak_locked = tweak_to_modify.lock().unwrap();
+                                    tweak_locked.status =
+                                        TweakStatus::Failed("Failed to send tweak".to_string());
+                                }
                             }
                         }
                         TweakWidget::Button(_) => {
@@ -148,23 +134,29 @@ impl App for MyApp {
                             let response = button_widget.ui(ui);
 
                             if response.clicked() && current_state == ButtonState::Default {
-                                // Update status to Applying
-                                if let Some(tweak_arc) = self
-                                    .tweaks
-                                    .iter()
-                                    .find(|t| t.lock().unwrap().id == tweak.id)
+                                // Clone the Arc to move into the closure
+                                let tweak_to_modify = tweak_arc.clone();
+
+                                // Update status to Applying without holding the lock during UI closure
                                 {
-                                    let mut tweak_locked = tweak_arc.lock().unwrap();
+                                    let mut tweak_locked = tweak_to_modify.lock().unwrap();
                                     tweak_locked.status = TweakStatus::Applying;
                                 }
 
                                 // Send tweak to executor
-
                                 let is_toggle = false;
-                                let _ = self.executor.sender.send(WorkerMessage::ExecuteTweak {
-                                    tweak: tweak_arc.clone(),
-                                    is_toggle,
-                                });
+                                if let Err(e) =
+                                    self.executor.sender.send(WorkerMessage::ExecuteTweak {
+                                        tweak: tweak_to_modify.clone(),
+                                        is_toggle,
+                                    })
+                                {
+                                    tracing::error!("Failed to send ExecuteTweak message: {}", e);
+                                    // Optionally, revert the status or notify the user
+                                    let mut tweak_locked = tweak_to_modify.lock().unwrap();
+                                    tweak_locked.status =
+                                        TweakStatus::Failed("Failed to send tweak".to_string());
+                                }
                             }
                         }
                     }
@@ -196,6 +188,10 @@ impl App for MyApp {
 }
 
 fn main() -> eframe::Result<()> {
+    // Initialize tracing subscriber to enable logging
+    tracing_subscriber::fmt::init();
+    tracing::info!("Starting Overclocking Assistant...");
+
     // Configure eframe options as needed
     let options = NativeOptions::default();
     eframe::run_native(

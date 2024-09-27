@@ -53,7 +53,7 @@ impl TweakExecutor {
                         };
 
                         tracing::info!(
-                            "Executing tweak {:?} as {}",
+                            "Starting tweak {:?} as {}",
                             tweak_id,
                             if is_toggle { "Toggle" } else { "Apply" }
                         );
@@ -78,7 +78,7 @@ impl TweakExecutor {
 
                         match result {
                             Ok(_) => {
-                                tracing::info!("Tweak {:?} executed successfully.", tweak_id);
+                                tracing::info!("Tweak {:?} completed successfully.", tweak_id);
                                 let _ = result_sender.send(WorkerResult::TweakCompleted {
                                     id: tweak_id,
                                     success: true,

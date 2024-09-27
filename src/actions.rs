@@ -61,19 +61,19 @@ impl Tweak {
 /// applying the tweak, and reverting it.
 pub trait TweakAction {
     /// Determines if the tweak is currently enabled.
-    fn is_enabled(self) -> Result<bool, anyhow::Error>;
+    fn is_enabled(&self) -> Result<bool, anyhow::Error>;
 
     /// Applies the tweak.
-    fn apply(self) -> Result<(), anyhow::Error>;
+    fn apply(&self) -> Result<(), anyhow::Error>;
 
     /// Reverts the tweak to its default state.
-    fn revert(self) -> Result<(), anyhow::Error>;
+    fn revert(&self) -> Result<(), anyhow::Error>;
 }
 
 impl TweakAction for Tweak {
     /// Checks the current state of the tweak and updates the `enabled` field accordingly.
-    fn is_enabled(self) -> Result<bool, anyhow::Error> {
-        match self.method {
+    fn is_enabled(&self) -> Result<bool, anyhow::Error> {
+        match &self.method {
             TweakMethod::Registry(method) => Ok(method.is_registry_tweak_enabled()?),
             TweakMethod::GroupPolicy(config) => Ok(config.is_group_policy_tweak_enabled()?),
             TweakMethod::Powershell(config) => Ok(config.is_powershell_script_enabled()?),
@@ -81,7 +81,7 @@ impl TweakAction for Tweak {
     }
 
     /// Applies the tweak based on its method.
-    fn apply(self) -> Result<(), anyhow::Error> {
+    fn apply(&self) -> Result<(), anyhow::Error> {
         match &self.method {
             TweakMethod::Registry(config) => {
                 config.apply_registry_tweak()?;
@@ -97,7 +97,7 @@ impl TweakAction for Tweak {
     }
 
     /// Reverts the tweak to its default state based on its method.
-    fn revert(self) -> Result<(), anyhow::Error> {
+    fn revert(&self) -> Result<(), anyhow::Error> {
         match &self.method {
             TweakMethod::Registry(method) => {
                 method.revert_registry_tweak()?;

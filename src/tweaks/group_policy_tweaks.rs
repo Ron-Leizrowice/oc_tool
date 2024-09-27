@@ -37,8 +37,6 @@ pub struct GroupPolicyTweak {
     pub key: String,
     /// The desired value for the policy.
     pub value: GroupPolicyValue,
-    /// The default value for the policy.
-    pub default_value: GroupPolicyValue,
 }
 
 /// Enumeration of possible Group Policy values.
@@ -372,7 +370,6 @@ pub fn initialize_group_policy_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         TweakMethod::GroupPolicy(GroupPolicyTweak {
             key: "SeLockMemoryPrivilege".to_string(),
             value: GroupPolicyValue::Enabled,
-            default_value: GroupPolicyValue::Disabled,
         }),
         true, // requires restart
     )]

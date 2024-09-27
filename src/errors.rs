@@ -31,12 +31,6 @@ pub enum GroupPolicyError {
     #[error("Failed to set group policy value: {0}")]
     SetValueError(String),
 
-    #[error("Failed to delete group policy value: {0}")]
-    DeleteValueError(String),
-
-    #[error("Failed to create group policy key: {0}")]
-    CreateError(String),
-
     #[error("Failed to read group policy value: {0}")]
     ReadValueError(String),
 }
