@@ -1,19 +1,18 @@
 // src/tweaks/registry_tweaks.rs
 
+use std::sync::{Arc, Mutex};
+
 use winreg::{
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
     RegKey,
 };
 
-use crate::{errors::RegistryError, tweaks::TweakId};
+use super::{Tweak, TweakMethod};
+use crate::{errors::RegistryError, tweaks::TweakId, widgets::TweakWidget};
 
 /// Represents a registry tweak, including the registry key, value name, desired value, and default value.
 #[derive(Clone, Debug)]
 pub struct RegistryTweak {
-    /// Display name of the tweak.
-    pub name: String,
-    /// Description of what the tweak does.
-    pub description: String,
     /// Full path of the registry key (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
     pub path: String,
     /// Key of the registry value to modify.
@@ -359,72 +358,97 @@ impl RegistryTweak {
     }
 }
 
-pub fn enable_large_system_cache() -> RegistryTweak {
-    RegistryTweak {
-        name: "LargeSystemCache".to_string(),
-        description: "Optimizes system memory management by adjusting the LargeSystemCache setting."
+
+pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::LargeSystemCache,
+        "Large System Cache".to_string(),
+        "Optimizes system memory management by adjusting the LargeSystemCache setting."
             .to_string(),
-        path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
+                .to_string(),
+            key: "LargeSystemCache".to_string(),
+            // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Windows will favor foreground applications in terms of memory allocation.
+            default_value: RegistryKeyValue::Dword(0),
+            
+        }),
+        false,
+        TweakWidget::Switch
+    )}
+
+pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::SystemResponsiveness,
+        "System Responsiveness".to_string(),
+        "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
             .to_string(),
-        key: "LargeSystemCache".to_string(),
-        // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
-        tweak_value: RegistryKeyValue::Dword(1),
-        // Windows will favor foreground applications in terms of memory allocation.
-        default_value: RegistryKeyValue::Dword(0),
-    }
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile"
+                .to_string(),
+            key: "SystemResponsiveness".to_string(),
+            // Windows will favor foreground applications in terms of resource allocation.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Windows will favor background services in terms of resource allocation.
+            default_value: RegistryKeyValue::Dword(20),
+        }),
+        false,
+        TweakWidget::Switch
+    )
+}
+pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableHWAcceleration,
+        "Disable Hardware Acceleration".to_string(),
+        "Disables hardware acceleration for the current user.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
+            key: "DisableHWAcceleration".to_string(),
+            // Hardware acceleration is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Hardware acceleration is enabled.
+            default_value: RegistryKeyValue::Dword(0),
+        }),
+        false,
+        TweakWidget::Switch
+    )
 }
 
-pub fn system_responsiveness() -> RegistryTweak {
-    RegistryTweak {
-        name: "SystemResponsiveness".to_string(),
-        description: "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
+pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::Win32PrioritySeparation,
+        "Win32 Priority Separation".to_string(),
+        "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
             .to_string(),
-        path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile"
-            .to_string(),
-        key: "SystemResponsiveness".to_string(),
-        // Windows will favor foreground applications in terms of resource allocation.
-        tweak_value: RegistryKeyValue::Dword(0),
-        // Windows will favor background services in terms of resource allocation.
-        default_value: RegistryKeyValue::Dword(20),
-    }
-}
-
-pub fn disable_hw_acceleration() -> RegistryTweak {
-    RegistryTweak {
-        name: "DisableHWAcceleration".to_string(),
-        description: "Disables hardware acceleration for the current user.".to_string(),
-        path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
-        key: "DisableHWAcceleration".to_string(),
-        // Hardware acceleration is disabled.
-        tweak_value: RegistryKeyValue::Dword(1),
-        // Hardware acceleration is enabled.
-        default_value: RegistryKeyValue::Dword(0),
-    }
-}
-
-pub fn win32_priority_separation() -> RegistryTweak {
-    RegistryTweak {
-        name: "Win32PrioritySeparation".to_string(),
-        description: "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
-            .to_string(),
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl".to_string(),
             key: "Win32PrioritySeparation".to_string(),
             // Foreground applications will receive priority over background services.
             tweak_value: RegistryKeyValue::Dword(26),
             // Background services will receive priority over foreground applications.
             default_value: RegistryKeyValue::Dword(2),
-    }
+        }),
+        false,
+        TweakWidget::Switch
+    )
 }
 
-pub fn disable_core_parking() -> RegistryTweak {
-    RegistryTweak {
-        name: "DisableCoreParking".to_string(),
-        description: "Disables core parking to improve system performance.".to_string(),
-        path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
-        key: "ValueMax".to_string(),
-        // Core parking is disabled.
-        tweak_value: RegistryKeyValue::Dword(0),
-        // Core parking is enabled.
-        default_value: RegistryKeyValue::Dword(64),
-    }
+pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableCoreParking,
+        "Disable Core Parking".to_string(),
+        "Disables core parking to improve system performance.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
+            key: "ValueMax".to_string(),
+            // Core parking is disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Core parking is enabled.
+            default_value: RegistryKeyValue::Dword(64),
+        }),
+        false,
+        TweakWidget::Switch
+    )
 }

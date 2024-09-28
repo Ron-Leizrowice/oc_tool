@@ -1,12 +1,22 @@
 // src/utils.rs
 
-use std::ptr::null_mut;
+use std::{process::Command, ptr::null_mut};
 
 use winapi::um::{
     handleapi::CloseHandle,
     processthreadsapi::{GetCurrentProcess, OpenProcessToken},
     securitybaseapi::GetTokenInformation,
     winnt::{TokenElevation, HANDLE, TOKEN_ELEVATION, TOKEN_QUERY},
+    winuser::ExitWindowsEx,
+};
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::LUID,
+        Security::{
+            AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, TOKEN_PRIVILEGES,
+        },
+    },
 };
 
 /// Checks if the current process is running with elevated (administrator) privileges.
@@ -42,4 +52,22 @@ pub fn is_elevated() -> bool {
         unsafe { CloseHandle(handle) };
     }
     false
+}
+
+/// Initiates a system reboot.
+///
+/// Returns:
+/// - `Ok(())` if the reboot command was successfully executed.
+/// - `Err(anyhow::Error)` if there was an error executing the reboot command.
+pub fn reboot_system() -> Result<(), anyhow::Error> {
+    // For Windows, use the 'shutdown' command with '/r' flag to reboot
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("shutdown")
+            .args(&["/r", "/t", "0"])
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to execute shutdown command: {}", e))?;
+    }
+
+    Ok(())
 }

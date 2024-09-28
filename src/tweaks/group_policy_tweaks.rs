@@ -1,6 +1,9 @@
 // src/tweaks/group_policy_tweaks.rs
 
-use std::ptr;
+use std::{
+    ptr,
+    sync::{Arc, Mutex},
+};
 
 use windows::{
     core::{PCWSTR, PWSTR},
@@ -17,8 +20,8 @@ use windows::{
     },
 };
 
-use super::TweakId;
-use crate::errors::GroupPolicyError;
+use super::{Tweak, TweakId, TweakMethod};
+use crate::{errors::GroupPolicyError, widgets::TweakWidget};
 
 /// Group Policy related constants.
 pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
@@ -27,10 +30,6 @@ pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
 /// Represents a Group Policy tweak, including the policy key and desired value.
 #[derive(Clone, Debug)]
 pub struct GroupPolicyTweak {
-    /// Display name of the tweak.
-    pub name: String,
-    /// Description of what the tweak does.
-    pub description: String,
     /// The policy key (e.g., "SeLockMemoryPrivilege").
     pub key: String,
     /// The desired value for the policy.
@@ -429,12 +428,16 @@ impl Drop for LsaHandleGuard {
     }
 }
 
-pub fn se_lock_memory_privilege() -> GroupPolicyTweak {
-    GroupPolicyTweak {
-        name: "SeLockMemoryPrivilege".to_string(),
-        description: "Assigns the 'Lock pages in memory' privilege to the current user."
-            .to_string(),
-        key: "SeLockMemoryPrivilege".to_string(),
-        value: GroupPolicyValue::Enabled,
-    }
+pub fn se_lock_memory_privilege() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::SeLockMemoryPrivilege,
+        "SeLockMemoryPrivilege".to_string(),
+        "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(),
+        TweakMethod::GroupPolicy(GroupPolicyTweak {
+            key: "SeLockMemoryPrivilege".to_string(),
+            value: GroupPolicyValue::Enabled,
+        }),
+        true,
+        TweakWidget::Switch,
+    )
 }

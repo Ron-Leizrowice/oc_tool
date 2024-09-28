@@ -39,13 +39,4 @@ pub enum GroupPolicyError {
 pub enum PowershellError {
     #[error("Failed to execute PowerShell script: {0}")]
     ScriptExecutionError(String),
-
-    #[error("Failed to read current state: {0}")]
-    ReadStateError(String),
-
-    #[error("Failed to apply tweak: {0}")]
-    ApplyError(String),
-
-    #[error("Failed to revert tweak: {0}")]
-    RevertError(String),
 }
