@@ -4,7 +4,6 @@ use egui::{self, Color32, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
 
 const DEFAULT_TEXT: &str = "Apply";
 const IN_PROGRESS_TEXT: &str = "Applying...";
-const COMPLETED_TEXT: &str = "Done";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonState {

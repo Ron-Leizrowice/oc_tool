@@ -4,15 +4,13 @@ pub mod group_policy_tweaks;
 pub mod powershell_tweaks;
 pub mod registry_tweaks;
 
-use std::sync::{Arc, Mutex};
+use std::hash::Hash;
 
-use group_policy_tweaks::{initialize_group_policy_tweaks, GroupPolicyTweak};
-use powershell_tweaks::{initialize_powershell_tweaks, PowershellTweak};
-use registry_tweaks::{initialize_registry_tweaks, RegistryTweak};
-
-use crate::{
-    actions::Tweak,
-    widgets::TweakWidget,
+use group_policy_tweaks::{se_lock_memory_privilege, GroupPolicyTweak};
+use powershell_tweaks::{enable_ultimate_performance_plan, process_idle_tasks, PowershellTweak};
+use registry_tweaks::{
+    disable_core_parking, disable_hw_acceleration, enable_large_system_cache,
+    system_responsiveness, win32_priority_separation, RegistryTweak,
 };
 
 /// Enum representing the method used to apply or revert a tweak.
@@ -25,56 +23,29 @@ pub enum TweakMethod {
     GroupPolicy(GroupPolicyTweak),
     Powershell(PowershellTweak),
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TweakId {
     LargeSystemCache,
     SystemResponsiveness,
     DisableHWAcceleration,
     Win32PrioritySeparation,
-    DisableLowDiskCheck,
     DisableCoreParking,
     ProcessIdleTasks,
     SeLockMemoryPrivilege,
     UltimatePerformancePlan,
 }
 
-pub fn add_tweak(
-    id: TweakId,
-    name: String,
-    description: String,
-    method: TweakMethod,
-    requires_restart: bool,
-) -> Arc<Mutex<Tweak>> {
-    let widget = match &method {
-        TweakMethod::Registry(_) => TweakWidget::Switch,
-        TweakMethod::GroupPolicy(_) => TweakWidget::Switch,
-        TweakMethod::Powershell(tweak) => {
-            if tweak.undo_script.is_some() {
-                TweakWidget::Switch
-            } else {
-                TweakWidget::Button
-            }
+pub fn fetch_tweak_method(id: TweakId) -> TweakMethod {
+    match id {
+        TweakId::LargeSystemCache => TweakMethod::Registry(enable_large_system_cache()),
+        TweakId::SystemResponsiveness => TweakMethod::Registry(system_responsiveness()),
+        TweakId::DisableHWAcceleration => TweakMethod::Registry(disable_hw_acceleration()),
+        TweakId::Win32PrioritySeparation => TweakMethod::Registry(win32_priority_separation()),
+        TweakId::DisableCoreParking => TweakMethod::Registry(disable_core_parking()),
+        TweakId::ProcessIdleTasks => TweakMethod::Powershell(process_idle_tasks()),
+        TweakId::SeLockMemoryPrivilege => TweakMethod::GroupPolicy(se_lock_memory_privilege()),
+        TweakId::UltimatePerformancePlan => {
+            TweakMethod::Powershell(enable_ultimate_performance_plan())
         }
-    };
-
-    Arc::new(Mutex::new(Tweak::new(
-        id,
-        name,
-        description,
-        method,
-        widget,
-        requires_restart,
-    )))
-}
-
-pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
-    [
-        initialize_powershell_tweaks(),
-        initialize_registry_tweaks(),
-        initialize_group_policy_tweaks(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    }
 }
