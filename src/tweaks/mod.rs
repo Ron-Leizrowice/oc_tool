@@ -15,16 +15,16 @@ use powershell_tweaks::{
     additional_kernel_worker_threads, aggressive_dpc_handling, disable_5_level_paging,
     disable_application_telemetry, disable_dma_protection, disable_dynamic_tick,
     disable_kernel_memory_mitigations, disable_local_firewall, disable_ntfs_refs_mitigations,
-    disable_process_kernel_mitigations, disable_ram_compression, disallow_driver_paging,
-    enable_ultimate_performance_plan, enable_x2apic_memory_mapping, enhanced_kernel_performance,
-    force_contiguous_memory_dx_kernel, force_contiguous_memory_nvidia, optimize_memory_allocation,
-    process_idle_tasks, realtime_priority_csrss, thread_dpc_disable, PowershellTweak,
+    disable_process_kernel_mitigations, disable_ram_compression, enable_ultimate_performance_plan,
+    enable_x2apic_memory_mapping, enhanced_kernel_performance, force_contiguous_memory_dx_kernel,
+    force_contiguous_memory_nvidia, optimize_memory_allocation, process_idle_tasks,
+    realtime_priority_csrss, thread_dpc_disable, PowershellTweak,
 };
 use registry_tweaks::{
-    disable_core_parking, disable_hw_acceleration, disable_low_disk_space_checks,
-    disable_ntfs_tunnelling, disable_windows_error_reporting, distribute_timers,
-    dont_verify_random_drivers, enable_large_system_cache, system_responsiveness,
-    win32_priority_separation, RegistryTweak,
+    disable_core_parking, disable_driver_paging, disable_hw_acceleration,
+    disable_low_disk_space_checks, disable_ntfs_tunnelling, disable_windows_error_reporting,
+    distribute_timers, dont_verify_random_drivers, enable_large_system_cache,
+    system_responsiveness, win32_priority_separation, RegistryTweak,
 };
 
 use crate::widgets::TweakWidget;
@@ -32,7 +32,7 @@ use crate::widgets::TweakWidget;
 /// Enum representing the method used to apply or revert a tweak.
 /// - `Registry`: Modifies Windows Registry keys.
 /// - `GroupPolicy`: Adjusts Group Policy settings.
-/// - `Command`: Executes PowerShell or other scripts.
+/// - `Powershell`: Executes PowerShell or other scripts.
 #[derive(Clone, Debug)]
 pub enum TweakMethod {
     Registry(RegistryTweak),
@@ -77,7 +77,6 @@ pub enum TweakId {
     DisableProcessKernelMitigations,
     RealtimePriorityCsrss,
     DisableRamCompression,
-    DisallowDriverPaging,
     DisableNTFSREFSMitigations,
     EnableX2ApicMemoryMapping,
     ForceContiguousMemoryDxKernel,
@@ -86,6 +85,7 @@ pub enum TweakId {
     DisableWindowsErrorReporting,
     DisableLocalFirewall,
     DontVerifyRandomDrivers,
+    DisableDriverPaging,
 }
 
 /// Represents a single tweak that can be applied to the system.
@@ -93,10 +93,15 @@ pub enum TweakId {
 pub struct Tweak {
     /// Unique identifier for the tweak.
     pub id: TweakId,
+    /// Display name of the tweak.
     pub name: String,
+    /// Description of the tweak and its effects, shown in hover toolip.
     pub description: String,
+    /// Category of the tweak, used for grouping tweaks in the UI.
     pub category: TweakCategory,
+    /// List of citations for the tweak, shown in the tweak details.
     pub citations: Vec<String>,
+    /// The method used to apply or revert the tweak.
     pub method: TweakMethod,
     /// The widget to use for each tweak
     pub widget: TweakWidget,
@@ -216,7 +221,6 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         disable_process_kernel_mitigations(),
         realtime_priority_csrss(),
         disable_ram_compression(),
-        disallow_driver_paging(),
         disable_ntfs_refs_mitigations(),
         enable_x2apic_memory_mapping(),
         force_contiguous_memory_dx_kernel(),
@@ -225,5 +229,6 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         disable_windows_error_reporting(),
         disable_local_firewall(),
         dont_verify_random_drivers(),
+        disable_driver_paging(),
     ]
 }

@@ -1009,59 +1009,6 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disallow_driver_paging() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisallowDriverPaging,
-        "Disallow Drivers to Get Paged into Virtual Memory".to_string(),
-        "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
-        TweakCategory::Memory,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
-                $disablePagingExecutive = (Get-ItemProperty -Path $path -Name "DisablePagingExecutive" -ErrorAction SilentlyContinue).DisablePagingExecutive
-                
-                if ($disablePagingExecutive -eq 1) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -Value 1 -Type DWord -Force
-                    Write-Output "Disallow Drivers to Get Paged into Virtual Memory Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disallow Drivers to Get Paged into Virtual Memory Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "DisablePagingExecutive" -ErrorAction SilentlyContinue
-                    Write-Output "Disallow Drivers to Get Paged into Virtual Memory Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disallow Drivers to Get Paged into Virtual Memory Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
 pub fn disable_ntfs_refs_mitigations() -> Arc<Mutex<Tweak>> {
     Tweak::new(
         TweakId::DisableNTFSREFSMitigations,

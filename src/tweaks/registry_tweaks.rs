@@ -29,7 +29,6 @@ pub struct RegistryTweak {
 /// Enumeration of supported registry key value types.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RegistryKeyValue {
-    String(String),
     Dword(u32),
     // Add other types as needed (e.g., Qword, Binary, etc.)
 }
@@ -172,16 +171,6 @@ impl RegistryTweak {
 
         // Depending on the expected type, read the value
         match &self.tweak_value {
-            RegistryKeyValue::String(_) => {
-                let val: String = subkey.get_value(&self.key).map_err(|e| {
-                    RegistryError::ReadValueError(format!(
-                        "Failed to read string value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::debug!("{:?} -> Read string value '{}' = '{}'.", id, self.key, val);
-                Ok(RegistryKeyValue::String(val))
-            }
             RegistryKeyValue::Dword(_) => {
                 let val: u32 = subkey.get_value(&self.key).map_err(|e| {
                     RegistryError::ReadValueError(format!(
@@ -281,21 +270,6 @@ impl RegistryTweak {
 
         // Now, set the registry value based on its type
         match &self.tweak_value {
-            RegistryKeyValue::String(val) => {
-                subkey.set_value(&self.key, val).map_err(|e| {
-                    RegistryError::SetValueError(format!(
-                        "Failed to set string value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::info!(
-                    tweak_key = %self.path,
-                    "{:?} -> Set string value '{}' to '{}'.",
-                    id,
-                    self.key,
-                    val
-                );
-            }
             RegistryKeyValue::Dword(val) => {
                 subkey.set_value(&self.key, val).map_err(|e| {
                     RegistryError::SetValueError(format!(
@@ -373,22 +347,6 @@ impl RegistryTweak {
             Some(default_val) => {
                 // Restore the registry value to its default
                 match default_val {
-                    RegistryKeyValue::String(val) => {
-                        subkey.set_value(&self.key, val).map_err(|e| {
-                            RegistryError::SetValueError(format!(
-                                "Failed to set string value '{}' in key '{}': {}",
-                                self.key, self.path, e
-                            ))
-                        })?;
-                        tracing::info!(
-                            tweak_name = %self.key,
-                            tweak_key = %self.path,
-                            "{:?} -> Reverted string value '{}' to '{}'.",
-                            id,
-                            self.key,
-                            val
-                        );
-                    }
                     RegistryKeyValue::Dword(val) => {
                         subkey.set_value(&self.key, val).map_err(|e| {
                             RegistryError::SetValueError(format!(
@@ -524,7 +482,7 @@ pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
 pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
     Tweak::new(
         TweakId::Win32PrioritySeparation,
-        "Win32 Priority Separation".to_string(),
+        "Win32PrioritySeparation".to_string(),
         "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
             .to_string(),
         TweakCategory::System,
@@ -665,6 +623,26 @@ pub fn dont_verify_random_drivers() -> Arc<Mutex<Tweak>> {
             // Random driver verification is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Random driver verification is enabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_driver_paging() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableDriverPaging,
+        "Disable Driver Paging".to_string(),
+        "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
+        TweakCategory::Memory,
+        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
+            key: "DisablePagingExecutive".to_string(),
+            // Driver paging is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Driver paging is enabled.
             default_value: None,
         }),
         false,
