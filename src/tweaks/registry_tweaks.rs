@@ -7,7 +7,7 @@ use winreg::{
     RegKey,
 };
 
-use super::{Tweak, TweakMethod};
+use super::{Tweak, TweakCategory, TweakMethod};
 use crate::{errors::RegistryError, tweaks::TweakId, widgets::TweakWidget};
 
 /// Represents a registry tweak, including the registry key, value name, desired value, and default value.
@@ -451,14 +451,17 @@ impl RegistryTweak {
     }
 }
 
-/// Example tweak creation functions
-
 pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
     Tweak::new(
         TweakId::LargeSystemCache,
         "Large System Cache".to_string(),
         "Optimizes system memory management by adjusting the LargeSystemCache setting."
             .to_string(),
+            TweakCategory::Memory,
+            vec![
+                "https://archive.arstechnica.com/tweak/nt/cache.html"
+                    .to_string(),
+            ],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
                 .to_string(),
@@ -479,6 +482,11 @@ pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
         "System Responsiveness".to_string(),
         "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
             .to_string(),
+            TweakCategory::System,
+            vec![
+                "https://www.back2gaming.com/guides/how-to-tweak-windows-10-for-gaming/"
+                    .to_string(),
+            ],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile"
                 .to_string(),
@@ -498,6 +506,8 @@ pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
         TweakId::DisableHWAcceleration,
         "Disable Hardware Acceleration".to_string(),
         "Disables hardware acceleration for the current user.".to_string(),
+        TweakCategory::Graphics,
+        vec!["https://www.majorgeeks.com/content/page/how_to_disable_or_adjust_hardware_acceleration_in_windows.html#:~:text=Press%20the%20Windows%20Key%20%2B%20S,GPU%20scheduling%20on%20or%20off.".to_string()],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
             key: "DisableHWAcceleration".to_string(),
@@ -517,6 +527,11 @@ pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
         "Win32 Priority Separation".to_string(),
         "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
             .to_string(),
+        TweakCategory::System,
+        vec![
+            "https://docs.google.com/document/d/1c2-lUJq74wuYK1WrA_bIvgb89dUN0sj8-hO3vqmrau4/edit"
+                .to_string(),
+        ],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl".to_string(),
             key: "Win32PrioritySeparation".to_string(),
@@ -535,6 +550,8 @@ pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
         TweakId::DisableCoreParking,
         "Disable Core Parking".to_string(),
         "Disables core parking to improve system performance.".to_string(),
+        TweakCategory::Power,
+        vec!["https://www.overclock.net/threads/core-parking-in-windows-disable-for-more-performance.1544554/".to_string()],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
             key: "ValueMax".to_string(),
@@ -553,6 +570,8 @@ pub fn disable_low_disk_space_checks() -> Arc<Mutex<Tweak>> {
         TweakId::NoLowDiskSpaceChecks,
         "Disable Low Disk Space Checks".to_string(),
         "Disables low disk space checks to prevent notifications.".to_string(),
+        TweakCategory::Storage,
+        vec!["https://www.howtogeek.com/349523/how-to-disable-the-low-disk-space-warning-on-windows/".to_string()],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
             key: "NoLowDiskSpaceChecks".to_string(),
@@ -571,6 +590,8 @@ pub fn disable_ntfs_tunnelling() -> Arc<Mutex<Tweak>> {
         TweakId::DisableNtfsTunnelling,
         "Disable NTFS Tunnelling".to_string(),
         "Disables NTFS tunnelling to improve file system performance.".to_string(),
+        TweakCategory::Storage,
+        vec!["https://tweaks.com/windows/37011/optimise-ntfs/".to_string()],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
             key: "MaximumTunnelEntries".to_string(),
@@ -589,6 +610,11 @@ pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
         TweakId::DistributeTimers,
         "Distribute Timers".to_string(),
         "Enables timer distribution across all cores.".to_string(),
+        TweakCategory::System,
+        vec![
+            "https://sites.google.com/view/melodystweaks/misconceptions-about-timers-hpet-tsc-pmt"
+                .to_string(),
+        ],
         TweakMethod::Registry(RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel"
                 .to_string(),
@@ -596,6 +622,49 @@ pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
             // Timer distribution is enabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Timer distribution is disabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_windows_error_reporting() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableWindowsErrorReporting,
+        "Disable Windows Error Reporting".to_string(),
+        "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.".to_string(),
+        TweakCategory::Telemetry,
+        vec!["https://www.makeuseof.com/windows-disable-error-reporting/".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting".to_string(),
+            key: "Disabled".to_string(),
+            // Windows Error Reporting is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Windows Error Reporting is enabled.
+            default_value: Some(RegistryKeyValue::Dword(0)),
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn dont_verify_random_drivers() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DontVerifyRandomDrivers,
+        "Don't Verify Random Drivers".to_string(),
+        "Disables random driver verification to improve system performance.".to_string(),
+        TweakCategory::System,
+        vec![
+            "https://maxcheaters.com/topic/127491-counter-strike-improve-computer-performance/"
+                .to_string(),
+        ],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
+            key: "DontVerifyRandomDrivers".to_string(),
+            // Random driver verification is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Random driver verification is enabled.
             default_value: None,
         }),
         false,

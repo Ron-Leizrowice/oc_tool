@@ -221,8 +221,12 @@ impl MyApp {
                     for tweak in &apply_once_tweaks_no_reboot {
                         let tweak_guard = tweak.lock().unwrap();
 
-                        // Tweak Name
-                        ui.label(&tweak_guard.name);
+                        // Tweak Name with tooltip
+                        ui.label(
+                            egui::RichText::new(&tweak_guard.name)
+                                .text_style(egui::TextStyle::Body),
+                        )
+                        .on_hover_text(tweak_guard.description.clone());
 
                         // Apply Button
                         let button = egui::Button::new("Apply");
@@ -262,8 +266,12 @@ impl MyApp {
                     for tweak in &toggle_tweaks_requires_reboot {
                         let tweak_guard = tweak.lock().unwrap();
 
-                        // Tweak Name
-                        ui.label(&tweak_guard.name);
+                        // Tweak Name with tooltip
+                        ui.label(
+                            egui::RichText::new(&tweak_guard.name)
+                                .text_style(egui::TextStyle::Body),
+                        )
+                        .on_hover_text(tweak_guard.description.clone());
 
                         // Toggle Switch bound to the tweak's enabled state
                         let mut state = tweak_guard.enabled.load(atomic::Ordering::SeqCst);
@@ -309,8 +317,12 @@ impl MyApp {
                     for tweak in &toggle_tweaks_no_reboot {
                         let tweak_guard = tweak.lock().unwrap();
 
-                        // Tweak Name
-                        ui.label(&tweak_guard.name);
+                        // Tweak Name with tooltip
+                        ui.label(
+                            egui::RichText::new(&tweak_guard.name)
+                                .text_style(egui::TextStyle::Body),
+                        )
+                        .on_hover_text(tweak_guard.description.clone());
 
                         // Toggle Switch
                         let mut state = tweak_guard.enabled.load(atomic::Ordering::SeqCst);
@@ -345,8 +357,6 @@ impl MyApp {
                     }
                 });
         }
-
-        // Display notifications or additional UI elements here as needed
     }
 
     /// Renders the status bar at the bottom with divisions.
@@ -456,15 +466,19 @@ fn main() -> eframe::Result<()> {
 
     // Initialize tracing subscriber to enable logging with more detailed settings
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG) // Set the maximum log level
-        .with_target(false) // Optionally hide the log target (module path)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE) // Log when spans close
+        .with_max_level(Level::DEBUG)
+        .with_target(false)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .init();
 
     info!("Starting Overclocking Assistant...");
 
-    // Configure eframe options as needed
-    let options = NativeOptions::default();
+    let options = NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([440.0, 1000.0]) // Set a default initial size
+            .with_min_inner_size([400.0, 300.0]), // Set a minimum size
+        ..Default::default()
+    };
 
     // Create a tracing span for the run_native call
     let run_span = span!(Level::INFO, "Run Native");

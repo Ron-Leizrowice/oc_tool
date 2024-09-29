@@ -20,7 +20,7 @@ use windows::{
     },
 };
 
-use super::{Tweak, TweakId, TweakMethod};
+use super::{Tweak, TweakCategory, TweakId, TweakMethod};
 use crate::{errors::GroupPolicyError, widgets::TweakWidget};
 
 /// Group Policy related constants.
@@ -433,6 +433,8 @@ pub fn se_lock_memory_privilege() -> Arc<Mutex<Tweak>> {
         TweakId::SeLockMemoryPrivilege,
         "SeLockMemoryPrivilege".to_string(),
         "Assigns the 'Lock pages in memory' privilege to the current user.".to_string(),
+        TweakCategory::Memory,
+        vec!["http://www.numberworld.org/y-cruncher/guides/pages.html".to_string()],
         TweakMethod::GroupPolicy(GroupPolicyTweak {
             key: "SeLockMemoryPrivilege".to_string(),
             value: GroupPolicyValue::Enabled,

@@ -11,10 +11,19 @@ use std::{
 
 use anyhow::Error;
 use group_policy_tweaks::{se_lock_memory_privilege, GroupPolicyTweak};
-use powershell_tweaks::{enable_ultimate_performance_plan, process_idle_tasks, PowershellTweak};
+use powershell_tweaks::{
+    additional_kernel_worker_threads, aggressive_dpc_handling, disable_5_level_paging,
+    disable_application_telemetry, disable_dma_protection, disable_dynamic_tick,
+    disable_kernel_memory_mitigations, disable_local_firewall, disable_ntfs_refs_mitigations,
+    disable_process_kernel_mitigations, disable_ram_compression, disallow_driver_paging,
+    enable_ultimate_performance_plan, enable_x2apic_memory_mapping, enhanced_kernel_performance,
+    force_contiguous_memory_dx_kernel, force_contiguous_memory_nvidia, optimize_memory_allocation,
+    process_idle_tasks, realtime_priority_csrss, thread_dpc_disable, PowershellTweak,
+};
 use registry_tweaks::{
     disable_core_parking, disable_hw_acceleration, disable_low_disk_space_checks,
-    disable_ntfs_tunnelling, distribute_timers, enable_large_system_cache, system_responsiveness,
+    disable_ntfs_tunnelling, disable_windows_error_reporting, distribute_timers,
+    dont_verify_random_drivers, enable_large_system_cache, system_responsiveness,
     win32_priority_separation, RegistryTweak,
 };
 
@@ -30,6 +39,19 @@ pub enum TweakMethod {
     GroupPolicy(GroupPolicyTweak),
     Powershell(PowershellTweak),
 }
+
+#[derive(Debug, Clone)]
+pub enum TweakCategory {
+    System,
+    Power,
+    Kernel,
+    Memory,
+    Security,
+    Graphics,
+    Telemetry,
+    Storage,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TweakId {
     LargeSystemCache,
@@ -43,6 +65,27 @@ pub enum TweakId {
     NoLowDiskSpaceChecks,
     DisableNtfsTunnelling,
     DistributeTimers,
+    AdditionalKernelWorkerThreads,
+    DisableDynamicTick,
+    AggressiveDpcHandling,
+    EnhancedKernelPerformance,
+    ThreadDpcDisable,
+    Disable5LevelPaging,
+    OptimizeMemoryAllocation,
+    DisableKernelMemoryMitigations,
+    DisableDMAProtection,
+    DisableProcessKernelMitigations,
+    RealtimePriorityCsrss,
+    DisableRamCompression,
+    DisallowDriverPaging,
+    DisableNTFSREFSMitigations,
+    EnableX2ApicMemoryMapping,
+    ForceContiguousMemoryDxKernel,
+    ForceContiguousMemoryNvidia,
+    DisableApplicationTelemetry,
+    DisableWindowsErrorReporting,
+    DisableLocalFirewall,
+    DontVerifyRandomDrivers,
 }
 
 /// Represents a single tweak that can be applied to the system.
@@ -52,6 +95,8 @@ pub struct Tweak {
     pub id: TweakId,
     pub name: String,
     pub description: String,
+    pub category: TweakCategory,
+    pub citations: Vec<String>,
     pub method: TweakMethod,
     /// The widget to use for each tweak
     pub widget: TweakWidget,
@@ -77,6 +122,8 @@ impl Tweak {
         id: TweakId,
         name: String,
         description: String,
+        category: TweakCategory,
+        citations: Vec<String>,
         method: TweakMethod,
         requires_reboot: bool,
         widget: TweakWidget,
@@ -85,6 +132,8 @@ impl Tweak {
             id,
             name,
             description,
+            category,
+            citations,
             method,
             widget,
             enabled: Arc::new(AtomicBool::new(false)),
@@ -155,5 +204,26 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         disable_low_disk_space_checks(),
         disable_ntfs_tunnelling(),
         distribute_timers(),
+        additional_kernel_worker_threads(),
+        disable_dynamic_tick(),
+        aggressive_dpc_handling(),
+        enhanced_kernel_performance(),
+        thread_dpc_disable(),
+        disable_5_level_paging(),
+        optimize_memory_allocation(),
+        disable_kernel_memory_mitigations(),
+        disable_dma_protection(),
+        disable_process_kernel_mitigations(),
+        realtime_priority_csrss(),
+        disable_ram_compression(),
+        disallow_driver_paging(),
+        disable_ntfs_refs_mitigations(),
+        enable_x2apic_memory_mapping(),
+        force_contiguous_memory_dx_kernel(),
+        force_contiguous_memory_nvidia(),
+        disable_application_telemetry(),
+        disable_windows_error_reporting(),
+        disable_local_firewall(),
+        dont_verify_random_drivers(),
     ]
 }
