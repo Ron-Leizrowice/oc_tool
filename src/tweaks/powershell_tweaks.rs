@@ -1338,3 +1338,55 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
         TweakWidget::Switch,
     )
 }
+
+pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableSuccessAuditing,
+        "Disable Success Auditing".to_string(),
+        "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.".to_string(),
+        TweakCategory::Security,
+        vec!["https://sites.google.com/view/melodystweaks/securitytweaks".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: Some(
+                r#"
+                $auditSettings = (AuditPol /get /category:* /success).Contains("Success Disable")
+                
+                if ($auditSettings) {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            apply_script: Some(
+                r#"
+                try {
+                    Auditpol /set /category:* /Success:disable
+                    Write-Output "Disable Success Auditing Applied Successfully."
+                } catch {
+                    Write-Error "Failed to apply Disable Success Auditing: $_"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            undo_script: Some(
+                r#"
+                try {
+                    Auditpol /set /category:* /Success:enable
+                    Write-Output "Disable Success Auditing Reverted Successfully."
+                } catch {
+                    Write-Error "Failed to revert Disable Success Auditing: $_"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}

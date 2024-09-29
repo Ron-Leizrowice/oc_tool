@@ -15,10 +15,10 @@ use powershell_tweaks::{
     additional_kernel_worker_threads, aggressive_dpc_handling, disable_5_level_paging,
     disable_application_telemetry, disable_dma_protection, disable_dynamic_tick,
     disable_kernel_memory_mitigations, disable_local_firewall, disable_ntfs_refs_mitigations,
-    disable_process_kernel_mitigations, disable_ram_compression, enable_ultimate_performance_plan,
-    enable_x2apic_memory_mapping, enhanced_kernel_performance, force_contiguous_memory_dx_kernel,
-    force_contiguous_memory_nvidia, optimize_memory_allocation, process_idle_tasks,
-    realtime_priority_csrss, thread_dpc_disable, PowershellTweak,
+    disable_process_kernel_mitigations, disable_ram_compression, disable_success_auditing,
+    enable_ultimate_performance_plan, enable_x2apic_memory_mapping, enhanced_kernel_performance,
+    force_contiguous_memory_dx_kernel, force_contiguous_memory_nvidia, optimize_memory_allocation,
+    process_idle_tasks, realtime_priority_csrss, thread_dpc_disable, PowershellTweak,
 };
 use registry_tweaks::{
     disable_core_parking, disable_driver_paging, disable_hw_acceleration,
@@ -87,6 +87,7 @@ pub enum TweakId {
     DontVerifyRandomDrivers,
     DisableDriverPaging,
     DisablePrefetcher,
+    DisableSuccessAuditing,
 }
 
 /// Represents a single tweak that can be applied to the system.
@@ -232,5 +233,6 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         dont_verify_random_drivers(),
         disable_driver_paging(),
         disable_prefetcher(),
+        disable_success_auditing(),
     ]
 }
