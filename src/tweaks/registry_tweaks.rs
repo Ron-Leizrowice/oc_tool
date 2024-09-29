@@ -649,3 +649,25 @@ pub fn disable_driver_paging() -> Arc<Mutex<Tweak>> {
         TweakWidget::Switch,
     )
 }
+
+// HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters create dword EnablePrefetcher=0
+
+pub fn disable_prefetcher() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisablePrefetcher,
+        "Disable Prefetcher".to_string(),
+        "Disables the Prefetcher service to improve system performance.".to_string(),
+        TweakCategory::Memory,
+        vec!["https://www.tenforums.com/tutorials/82016-enable-disable-prefetch-windows-10-a.html".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters".to_string(),
+            key: "EnablePrefetcher".to_string(),
+            // Prefetcher is disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Prefetcher is enabled.
+            default_value: Some(RegistryKeyValue::Dword(3)),
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}

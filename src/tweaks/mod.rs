@@ -22,9 +22,9 @@ use powershell_tweaks::{
 };
 use registry_tweaks::{
     disable_core_parking, disable_driver_paging, disable_hw_acceleration,
-    disable_low_disk_space_checks, disable_ntfs_tunnelling, disable_windows_error_reporting,
-    distribute_timers, dont_verify_random_drivers, enable_large_system_cache,
-    system_responsiveness, win32_priority_separation, RegistryTweak,
+    disable_low_disk_space_checks, disable_ntfs_tunnelling, disable_prefetcher,
+    disable_windows_error_reporting, distribute_timers, dont_verify_random_drivers,
+    enable_large_system_cache, system_responsiveness, win32_priority_separation, RegistryTweak,
 };
 
 use crate::widgets::TweakWidget;
@@ -86,6 +86,7 @@ pub enum TweakId {
     DisableLocalFirewall,
     DontVerifyRandomDrivers,
     DisableDriverPaging,
+    DisablePrefetcher,
 }
 
 /// Represents a single tweak that can be applied to the system.
@@ -230,5 +231,6 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         disable_local_firewall(),
         dont_verify_random_drivers(),
         disable_driver_paging(),
+        disable_prefetcher(),
     ]
 }
