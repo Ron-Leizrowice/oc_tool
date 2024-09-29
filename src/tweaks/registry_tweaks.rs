@@ -11,16 +11,19 @@ use super::{Tweak, TweakMethod};
 use crate::{errors::RegistryError, tweaks::TweakId, widgets::TweakWidget};
 
 /// Represents a registry tweak, including the registry key, value name, desired value, and default value.
+/// If `default_value` is `None`, the tweak is considered enabled if the registry value exists.
+/// Reverting such a tweak involves deleting the registry value.
 #[derive(Clone, Debug)]
 pub struct RegistryTweak {
     /// Full path of the registry key (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
     pub path: String,
-    /// Key of the registry value to modify.
+    /// Name of the registry value to modify.
     pub key: String,
     /// The value to set when applying the tweak.
     pub tweak_value: RegistryKeyValue,
     /// The default value to revert to when undoing the tweak.
-    pub default_value: RegistryKeyValue,
+    /// If `None`, reverting deletes the registry value.
+    pub default_value: Option<RegistryKeyValue>,
 }
 
 /// Enumeration of supported registry key value types.
@@ -32,29 +35,65 @@ pub enum RegistryKeyValue {
 }
 
 impl RegistryTweak {
-    /// Checks if the tweak is currently enabled by comparing the current value to the default value.
-    /// If the value does not exist, assume the tweak is disabled.
+    /// Checks if the tweak is currently enabled.
+    ///
+    /// - If `default_value` is `Some(value)`, the tweak is enabled if the current registry value equals `value`.
+    /// - If `default_value` is `None`, the tweak is enabled if the registry value exists.
+    ///
+    /// # Parameters
+    ///
+    /// - `id`: The unique identifier for the tweak.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if the tweak is enabled.
+    /// - `Ok(false)` if the tweak is disabled.
+    /// - `Err(RegistryError)` if an error occurs while reading the registry.
     pub fn is_registry_tweak_enabled(&self, id: TweakId) -> Result<bool, RegistryError> {
         tracing::info!("{:?} -> Determining if registry tweak is enabled.", id);
         match self.read_current_value(id) {
             Ok(current_value) => {
-                let is_enabled = current_value == self.default_value;
-                tracing::info!(
-                    "{:?} -> Registry tweak is currently {}.",
-                    id,
-                    if is_enabled { "enabled" } else { "disabled" }
-                );
-                Ok(is_enabled)
+                match &self.default_value {
+                    Some(default_val) => {
+                        let is_enabled = current_value != *default_val;
+                        tracing::info!(
+                            "{:?} -> Registry tweak is currently {}.",
+                            id,
+                            if is_enabled { "enabled" } else { "disabled" }
+                        );
+                        Ok(is_enabled)
+                    }
+                    None => {
+                        // If default_value is None, the tweak is enabled if the key exists
+                        tracing::info!(
+                            "{:?} -> Registry tweak is currently enabled (value exists).",
+                            id
+                        );
+                        Ok(true)
+                    }
+                }
             }
             Err(RegistryError::ReadValueError(ref msg))
                 if msg.contains("The system cannot find the file specified") =>
             {
-                // Assume default state if the value does not exist
-                tracing::info!(
-                    "{:?} -> Registry tweak is currently disabled (value not found).",
-                    id
-                );
-                Ok(false)
+                match &self.default_value {
+                    Some(_) => {
+                        // With a default value, absence means tweak is disabled
+                        tracing::info!(
+                            "{:?} -> Registry tweak is currently disabled (value not found).",
+                            id
+                        );
+                        Ok(false)
+                    }
+                    None => {
+                        // Without a default value, absence means tweak is disabled
+                        tracing::info!(
+                            "{:?} -> Registry tweak is currently disabled (value not found).",
+                            id
+                        );
+                        Ok(false)
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!(
@@ -68,6 +107,10 @@ impl RegistryTweak {
     }
 
     /// Reads the current value of the specified registry key.
+    ///
+    /// # Parameters
+    ///
+    /// - `id`: The unique identifier for the tweak.
     ///
     /// # Returns
     ///
@@ -153,6 +196,10 @@ impl RegistryTweak {
     }
 
     /// Applies the registry tweak by setting the specified registry value.
+    ///
+    /// # Parameters
+    ///
+    /// - `id`: The unique identifier for the tweak.
     ///
     /// # Returns
     ///
@@ -263,7 +310,11 @@ impl RegistryTweak {
         Ok(())
     }
 
-    /// Reverts the registry tweak by restoring the default registry value.
+    /// Reverts the registry tweak by restoring the default registry value or deleting it if no default is provided.
+    ///
+    /// # Parameters
+    ///
+    /// - `id`: The unique identifier for the tweak.
     ///
     /// # Returns
     ///
@@ -318,46 +369,89 @@ impl RegistryTweak {
             }
         };
 
-        // Set the registry value back to its default
         match &self.default_value {
-            RegistryKeyValue::String(val) => {
-                subkey.set_value(&self.key, val).map_err(|e| {
-                    RegistryError::SetValueError(format!(
-                        "Failed to set string value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::info!(
-                    tweak_name = %self.key,
-                    tweak_key = %self.path,
-                    "{:?} -> Reverted string value '{}' to '{}'.",
-                    id,
-                    self.key,
-                    val
-                );
+            Some(default_val) => {
+                // Restore the registry value to its default
+                match default_val {
+                    RegistryKeyValue::String(val) => {
+                        subkey.set_value(&self.key, val).map_err(|e| {
+                            RegistryError::SetValueError(format!(
+                                "Failed to set string value '{}' in key '{}': {}",
+                                self.key, self.path, e
+                            ))
+                        })?;
+                        tracing::info!(
+                            tweak_name = %self.key,
+                            tweak_key = %self.path,
+                            "{:?} -> Reverted string value '{}' to '{}'.",
+                            id,
+                            self.key,
+                            val
+                        );
+                    }
+                    RegistryKeyValue::Dword(val) => {
+                        subkey.set_value(&self.key, val).map_err(|e| {
+                            RegistryError::SetValueError(format!(
+                                "Failed to set DWORD value '{}' in key '{}': {}",
+                                self.key, self.path, e
+                            ))
+                        })?;
+                        tracing::info!(
+                            tweak_name = %self.key,
+                            tweak_key = %self.path,
+                            "{:?} -> Reverted DWORD value '{}' to {}.",
+                            id,
+                            self.key,
+                            val
+                        );
+                    } // Handle other types as needed
+                }
             }
-            RegistryKeyValue::Dword(val) => {
-                subkey.set_value(&self.key, val).map_err(|e| {
-                    RegistryError::SetValueError(format!(
-                        "Failed to set DWORD value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::info!(
-                    tweak_name = %self.key,
-                    tweak_key = %self.path,
-                    "{:?} -> Reverted DWORD value '{}' to {}.",
-                    id,
-                    self.key,
-                    val
-                );
-            } // Handle other types as needed
+            None => {
+                // If no default value, delete the registry value
+                match subkey.delete_value(&self.key) {
+                    Ok(_) => {
+                        tracing::info!(
+                            tweak_name = %self.key,
+                            tweak_key = %self.path,
+                            "{:?} -> Deleted registry value '{}'.",
+                            id,
+                            self.key
+                        );
+                    }
+                    Err(e) => {
+                        // If the value does not exist, it's already in the default state
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            tracing::info!(
+                                tweak_name = %self.key,
+                                tweak_key = %self.path,
+                                "{:?} -> Registry value '{}' does not exist. No action needed.",
+                                id,
+                                self.key
+                            );
+                            return Ok(());
+                        } else {
+                            tracing::error!(
+                                error = ?e,
+                                "{:?} -> Failed to delete registry value '{}'.",
+                                id,
+                                self.key
+                            );
+                            return Err(RegistryError::DeleteValueError(format!(
+                                "Failed to delete registry value '{}' in key '{}': {}",
+                                self.key, self.path, e
+                            )));
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
     }
 }
 
+/// Example tweak creation functions
 
 pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
     Tweak::new(
@@ -372,12 +466,12 @@ pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
             // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
             tweak_value: RegistryKeyValue::Dword(1),
             // Windows will favor foreground applications in terms of memory allocation.
-            default_value: RegistryKeyValue::Dword(0),
-            
+            default_value: Some(RegistryKeyValue::Dword(0)),
         }),
         false,
-        TweakWidget::Switch
-    )}
+        TweakWidget::Switch,
+    )
+}
 
 pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
     Tweak::new(
@@ -392,12 +486,13 @@ pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
             // Windows will favor foreground applications in terms of resource allocation.
             tweak_value: RegistryKeyValue::Dword(0),
             // Windows will favor background services in terms of resource allocation.
-            default_value: RegistryKeyValue::Dword(20),
+            default_value: Some(RegistryKeyValue::Dword(20)),
         }),
         false,
-        TweakWidget::Switch
+        TweakWidget::Switch,
     )
 }
+
 pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
     Tweak::new(
         TweakId::DisableHWAcceleration,
@@ -409,10 +504,10 @@ pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
             // Hardware acceleration is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Hardware acceleration is enabled.
-            default_value: RegistryKeyValue::Dword(0),
+            default_value: Some(RegistryKeyValue::Dword(0)),
         }),
         false,
-        TweakWidget::Switch
+        TweakWidget::Switch,
     )
 }
 
@@ -428,10 +523,10 @@ pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
             // Foreground applications will receive priority over background services.
             tweak_value: RegistryKeyValue::Dword(26),
             // Background services will receive priority over foreground applications.
-            default_value: RegistryKeyValue::Dword(2),
+            default_value: Some(RegistryKeyValue::Dword(2)),
         }),
         false,
-        TweakWidget::Switch
+        TweakWidget::Switch,
     )
 }
 
@@ -446,9 +541,64 @@ pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
             // Core parking is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Core parking is enabled.
-            default_value: RegistryKeyValue::Dword(64),
+            default_value: Some(RegistryKeyValue::Dword(64)),
         }),
         false,
-        TweakWidget::Switch
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_low_disk_space_checks() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::NoLowDiskSpaceChecks,
+        "Disable Low Disk Space Checks".to_string(),
+        "Disables low disk space checks to prevent notifications.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
+            key: "NoLowDiskSpaceChecks".to_string(),
+            // Low disk space checks are disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Low disk space checks are enabled.
+            default_value: Some(RegistryKeyValue::Dword(0)),
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_ntfs_tunnelling() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableNtfsTunnelling,
+        "Disable NTFS Tunnelling".to_string(),
+        "Disables NTFS tunnelling to improve file system performance.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
+            key: "MaximumTunnelEntries".to_string(),
+            // NTFS tunnelling is disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // NTFS tunnelling is enabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DistributeTimers,
+        "Distribute Timers".to_string(),
+        "Enables timer distribution across all cores.".to_string(),
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel"
+                .to_string(),
+            key: "DistributeTimers".to_string(),
+            // Timer distribution is enabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Timer distribution is disabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
     )
 }

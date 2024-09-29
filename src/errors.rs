@@ -21,6 +21,9 @@ pub enum RegistryError {
 
     #[error("Failed to create registry key: {0}")]
     CreateError(String),
+
+    #[error("Failed to delete registry key: {0}")]
+    DeleteValueError(String),
 }
 
 #[derive(Error, Debug)]

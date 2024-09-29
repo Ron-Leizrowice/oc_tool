@@ -139,7 +139,7 @@ impl PowershellTweak {
                         "-ExecutionPolicy",
                         "Bypass",
                         "-Command",
-                        &script,
+                        script,
                     ])
                     .output()
                     .map_err(|e| {
@@ -166,11 +166,11 @@ impl PowershellTweak {
                         script,
                         stderr.trim()
                     );
-                    return Err(PowershellError::ScriptExecutionError(format!(
+                    Err(PowershellError::ScriptExecutionError(format!(
                         "PowerShell script '{}' failed with error: {}",
                         script,
                         stderr.trim()
-                    )));
+                    )))
                 }
             }
             None => {

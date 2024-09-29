@@ -161,7 +161,7 @@ impl GroupPolicyTweak {
             );
 
             // Corrected condition: Treat failure as error
-            if !lookup_result.is_ok() {
+            if lookup_result.is_err() {
                 let error_code = GetLastError();
                 tracing::error!(
                     "{:?} -> LookupAccountNameW failed. Error code: {}",

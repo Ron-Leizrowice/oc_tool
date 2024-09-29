@@ -1,93 +1,86 @@
 // src/widgets/switch.rs
 
-use egui::{self, Color32, Pos2, Response, Rounding, Sense, Stroke, Ui, Vec2, Widget};
+use egui::{self, Color32, Pos2, Response, Sense, Ui, Widget};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToggleSwitchState {
-    Off,
-    InProgress,
-    On,
-}
-
+/// Custom ToggleSwitch widget.
 #[derive(Clone, Copy, Debug)]
-pub struct ToggleSwitch {
-    pub state: ToggleSwitchState,
-    stroke_color: Stroke,
-    rounding: Rounding,
-    min_size: Vec2,
-}
-
-impl Default for ToggleSwitch {
-    fn default() -> Self {
-        Self::new(ToggleSwitchState::Off)
-    }
-}
-
-impl ToggleSwitch {
-    pub fn new(state: ToggleSwitchState) -> Self {
-        Self {
-            state,
-            stroke_color: Stroke::new(1.0, Color32::BLACK),
-            rounding: Rounding::same(15.0),
-            min_size: Vec2::new(60.0, 30.0),
-        }
-    }
-
-    pub fn fill_color(&self) -> Color32 {
-        match self.state {
-            ToggleSwitchState::Off => Color32::from_rgb(200, 200, 200),
-            ToggleSwitchState::InProgress => Color32::from_rgb(100, 150, 250),
-            ToggleSwitchState::On => Color32::from_rgb(100, 200, 100),
-        }
-    }
-}
+pub struct ToggleSwitch;
 
 impl Widget for ToggleSwitch {
     fn ui(self, ui: &mut Ui) -> Response {
-        let is_clickable = matches!(self.state, ToggleSwitchState::Off | ToggleSwitchState::On);
+        let desired_size = ui.spacing().interact_size.y * egui::vec2(2.0, 1.0);
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
 
-        let sense = if is_clickable {
-            Sense::click()
-        } else {
-            Sense::hover()
-        };
-
-        let (rect, mut response) = ui.allocate_exact_size(self.min_size, sense);
-
-        if is_clickable && response.clicked() {
+        // Handle click events.
+        if response.clicked() {
             response.mark_changed();
         }
 
+        // Provide widget information for accessibility.
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), false, "")
         });
 
+        // Only paint if the widget is visible.
         if ui.is_rect_visible(rect) {
-            let visuals = ui.style().interact(&response);
-            let expanded_rect = rect.expand(visuals.expansion);
-            let radius = 0.5 * rect.height();
+            // Note: The `on` state is managed externally and should be passed to the widget.
+            // Therefore, the widget should not attempt to retrieve it from UI memory.
 
-            // Draw the background rectangle
-            ui.painter().rect(
-                expanded_rect,
-                self.rounding,
-                self.fill_color(),
-                self.stroke_color,
-            );
+            // Instead, the caller manages the state and updates it based on user interaction.
+        }
 
-            // Position of the toggle circle
-            let circle_pos = match self.state {
-                ToggleSwitchState::Off => Pos2::new(rect.left() + radius, rect.center().y),
-                ToggleSwitchState::InProgress => rect.center(),
-                ToggleSwitchState::On => Pos2::new(rect.right() - radius, rect.center().y),
+        response
+    }
+}
+
+/// Helper function to create a ToggleSwitch widget bound to a boolean state.
+///
+/// ## Example:
+/// ```ignore
+/// let mut my_bool = true;
+/// ui.add(toggle_switch(&mut my_bool));
+/// ```
+pub fn toggle_switch(on: &mut bool) -> impl Widget + '_ {
+    move |ui: &mut Ui| {
+        // Create the ToggleSwitch widget.
+        let toggle = ToggleSwitch;
+
+        // Allocate the widget and get the response.
+        let response = ui.add(toggle);
+
+        // If the widget was clicked, toggle the state.
+        if response.clicked() {
+            *on = !*on;
+        }
+
+        // Draw the toggle based on the current state.
+        if ui.is_rect_visible(response.rect) {
+            let rect = response.rect;
+            let radius = rect.height() / 2.0;
+
+            // Define colors based on the toggle state.
+            let track_color = if *on {
+                Color32::from_rgb(0, 200, 0) // Green for "On"
+            } else {
+                Color32::from_rgb(200, 200, 200) // Grey for "Off"
             };
 
-            // Circle fill color
-            let circle_fill = Color32::WHITE;
+            let knob_color = Color32::WHITE;
 
-            // Draw the toggle circle
+            // Draw the track.
+            ui.painter().rect_filled(rect, radius, track_color);
+
+            // Calculate knob position.
+            let knob_x = if *on {
+                rect.right() - radius
+            } else {
+                rect.left() + radius
+            };
+            let knob_center = Pos2::new(knob_x, rect.center().y);
+
+            // Draw the knob.
             ui.painter()
-                .circle(circle_pos, 0.75 * radius, circle_fill, visuals.fg_stroke);
+                .circle_filled(knob_center, radius * 0.75, knob_color);
         }
 
         response

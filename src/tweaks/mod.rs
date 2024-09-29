@@ -13,8 +13,9 @@ use anyhow::Error;
 use group_policy_tweaks::{se_lock_memory_privilege, GroupPolicyTweak};
 use powershell_tweaks::{enable_ultimate_performance_plan, process_idle_tasks, PowershellTweak};
 use registry_tweaks::{
-    disable_core_parking, disable_hw_acceleration, enable_large_system_cache,
-    system_responsiveness, win32_priority_separation, RegistryTweak,
+    disable_core_parking, disable_hw_acceleration, disable_low_disk_space_checks,
+    disable_ntfs_tunnelling, distribute_timers, enable_large_system_cache, system_responsiveness,
+    win32_priority_separation, RegistryTweak,
 };
 
 use crate::widgets::TweakWidget;
@@ -39,6 +40,9 @@ pub enum TweakId {
     ProcessIdleTasks,
     SeLockMemoryPrivilege,
     UltimatePerformancePlan,
+    NoLowDiskSpaceChecks,
+    DisableNtfsTunnelling,
+    DistributeTimers,
 }
 
 /// Represents a single tweak that can be applied to the system.
@@ -148,5 +152,8 @@ pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
         process_idle_tasks(),
         se_lock_memory_privilege(),
         enable_ultimate_performance_plan(),
+        disable_low_disk_space_checks(),
+        disable_ntfs_tunnelling(),
+        distribute_timers(),
     ]
 }

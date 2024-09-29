@@ -7,16 +7,6 @@ use winapi::um::{
     processthreadsapi::{GetCurrentProcess, OpenProcessToken},
     securitybaseapi::GetTokenInformation,
     winnt::{TokenElevation, HANDLE, TOKEN_ELEVATION, TOKEN_QUERY},
-    winuser::ExitWindowsEx,
-};
-use windows::{
-    core::PCWSTR,
-    Win32::{
-        Foundation::LUID,
-        Security::{
-            AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, TOKEN_PRIVILEGES,
-        },
-    },
 };
 
 /// Checks if the current process is running with elevated (administrator) privileges.
@@ -64,7 +54,7 @@ pub fn reboot_system() -> Result<(), anyhow::Error> {
     #[cfg(target_os = "windows")]
     {
         Command::new("shutdown")
-            .args(&["/r", "/t", "0"])
+            .args(["/r", "/t", "0"])
             .status()
             .map_err(|e| anyhow::anyhow!("Failed to execute shutdown command: {}", e))?;
     }
