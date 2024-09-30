@@ -429,7 +429,7 @@ pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
             // Windows will favor foreground applications in terms of memory allocation.
             default_value: Some(RegistryKeyValue::Dword(0)),
         }),
-        false,
+        true,
         TweakWidget::Switch,
     )
 }
@@ -668,6 +668,107 @@ pub fn disable_prefetcher() -> Arc<Mutex<Tweak>> {
             default_value: Some(RegistryKeyValue::Dword(3)),
         }),
         false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_application_telemetry() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableApplicationTelemetry,
+        "Disable Application Telemetry".to_string(),
+        "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
+        TweakCategory::Telemetry,
+        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat".to_string(),
+            key: "AITEnable".to_string(),
+            // Application telemetry is disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Application telemetry is enabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn thread_dpc_disable() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::ThreadDpcDisable,
+        "Thread DPC Disable".to_string(),
+        "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
+        TweakCategory::Kernel,
+        vec!["https://www.youtube.com/watch?v=4OrEytGFdK4".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+            key: "ThreadDpcEnable".to_string(),
+            // Thread DPCs are disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Thread DPCs are enabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn svc_host_split_threshold() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::SvcHostSplitThreshold,
+        "SvcHost Split Threshold in KB".to_string(),
+        "Adjusts the SvcHost Split Threshold in KB to optimize system performance.".to_string(),
+        TweakCategory::System,
+        vec!["https://www.techpowerup.com/forums/threads/maddoggs-fast-gaming-pc-registry-tweaks.308591/".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control".to_string(),
+            key: "SvcHostSplitThresholdInKB".to_string(),
+            tweak_value: RegistryKeyValue::Dword(0x0f000000),
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_windows_defender() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableWindowsDefender,
+        "Disable Windows Defender".to_string(),
+        "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.".to_string(),
+        TweakCategory::Security,
+        vec!["https://www.windowscentral.com/how-permanently-disable-windows-defender-windows-10".to_string()],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender".to_string(),
+            key: "DisableAntiSpyware".to_string(),
+            // Windows Defender is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Windows Defender is enabled.
+            default_value: None,
+        }),
+        false,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_page_file_encryption() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisablePageFileEncryption,
+        "Disable Page File Encryption".to_string(),
+        "Disables page file encryption to improve system performance.".to_string(),
+        TweakCategory::Memory,
+        vec![
+            "https://www.tenforums.com/tutorials/82016-enable-disable-prefetch-windows-10-a.html"
+                .to_string(),
+        ],
+        TweakMethod::Registry(RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
+            key: "NtfsEncryptPagingFile".to_string(),
+            // Page file encryption is disabled.
+            tweak_value: RegistryKeyValue::Dword(0),
+            // Page file encryption is enabled.
+            default_value: Some(RegistryKeyValue::Dword(1)),
+        }),
+        true,
         TweakWidget::Switch,
     )
 }

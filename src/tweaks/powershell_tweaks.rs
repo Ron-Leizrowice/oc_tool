@@ -250,7 +250,7 @@ pub fn process_idle_tasks() -> Arc<Mutex<Tweak>> {
             undo_script: None,
             target_state: None,
         }),
-        false,
+        false, // requires reboot
         TweakWidget::Button,
     )
 }
@@ -291,7 +291,7 @@ pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
             ),
             target_state: Some("(Ultimate Performance)".trim().to_string()),
         }),
-        false,
+        false, // requires reboot
         TweakWidget::Switch,
     )
 }
@@ -349,7 +349,7 @@ pub fn disable_dynamic_tick() -> Arc<Mutex<Tweak>> {
             undo_script: Some("bcdedit /set disabledynamictick no".to_string()),
             target_state: Some("Yes".trim().to_string()),
         }),
-        false,
+        true,
         TweakWidget::Switch,
     )
 }
@@ -534,430 +534,6 @@ pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn thread_dpc_disable() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::ThreadDpcDisable,
-        "Thread DPC Disable".to_string(),
-        "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
-        TweakCategory::Kernel,
-        vec!["https://www.youtube.com/watch?v=4OrEytGFdK4".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-                try {
-                    $threadDpcEnable = (Get-ItemProperty -Path $path -Name "ThreadDpcEnable" -ErrorAction SilentlyContinue).ThreadDpcEnable
-
-                    if ($threadDpcEnable -eq 0) {
-                        "Enabled"
-                    } else {
-                        "Disabled"
-                    }
-                } catch {
-                    Write-Error "Failed to read the ThreadDpcEnable registry value."
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-                try {
-                    Set-ItemProperty -Path $path -Name "ThreadDpcEnable" -Value 0 -Type DWord -Force
-                    Write-Output "Thread DPC Disable Tweak Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Thread DPC Disable Tweak: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-                try {
-                    Remove-ItemProperty -Path $path -Name "ThreadDpcEnable" -ErrorAction SilentlyContinue
-                    Write-Output "Thread DPC Disable Tweak Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Thread DPC Disable Tweak: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_5_level_paging() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::Disable5LevelPaging,
-        "Disable 5-Level Paging and Increase User Virtual Memory".to_string(),
-        "Disables 57-bit 5-level paging (Linear Address 57) for 10th Gen Intel CPUs and increases the user-mode virtual address space to 256 TB per disk. This tweak is effective only on compatible Intel CPUs and aims to optimize memory usage for high-performance scenarios.".to_string(),
-        TweakCategory::Memory,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $linearAddress57 = bcdedit /enum | Select-String "linearaddress57" | ForEach-Object { $_.Line }
-                $increaseUserVA = bcdedit /enum | Select-String "increaseuserva" | ForEach-Object { $_.Line }
-                
-                if ($linearAddress57 -match "OptOut" -and $increaseUserVA -match "268435328") {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    bcdedit /set linearaddress57 OptOut
-                    bcdedit /set increaseuserva 268435328
-                    Write-Output "Disable 5-Level Paging and Increase User Virtual Memory Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable 5-Level Paging and Increase User Virtual Memory Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    bcdedit /deletevalue linearaddress57
-                    bcdedit /deletevalue increaseuserva
-                    Write-Output "Disable 5-Level Paging and Increase User Virtual Memory Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable 5-Level Paging and Increase User Virtual Memory Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn optimize_memory_allocation() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::OptimizeMemoryAllocation,
-        "Optimize Memory Allocation".to_string(),
-        "Avoids the use of uncontiguous low-memory portions by setting memory allocation policies. This tweak boosts memory performance and improves microstuttering in approximately 80% of cases. However, it may cause system freezes if memory modules are unstable.".to_string(),
-        TweakCategory::Memory,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $firstMBPolicy = bcdedit /enum | Select-String "firstmegabytepolicy" | ForEach-Object { $_.Line }
-                $avoidLowMemory = bcdedit /enum | Select-String "avoidlowmemory" | ForEach-Object { $_.Line }
-                $noLowMem = bcdedit /enum | Select-String "nolowmem" | ForEach-Object { $_.Line }
-                
-                if ($firstMBPolicy -match "UseAll" -and $avoidLowMemory -match "0x8000000" -and $noLowMem -match "Yes") {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    bcdedit /set firstmegabytepolicy UseAll
-                    bcdedit /set avoidlowmemory 0x8000000
-                    bcdedit /set nolowmem Yes
-                    Write-Output "Optimize Memory Allocation Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Optimize Memory Allocation Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    bcdedit /deletevalue firstmegabytepolicy
-                    bcdedit /deletevalue avoidlowmemory
-                    bcdedit /deletevalue nolowmem
-                    Write-Output "Optimize Memory Allocation Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Optimize Memory Allocation Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_kernel_memory_mitigations() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisableKernelMemoryMitigations,
-        "Disable Kernel Memory Mitigations".to_string(),
-        "Disables specific kernel memory mitigations to enhance performance. This tweak may cause boot crashes or loops if Intel SGX is enforced and not set to 'Application Controlled' or 'Off' in the firmware. It's recommended only for systems where SGX is not utilized.".to_string(),
-        TweakCategory::Security,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $allowedInMemSettings = bcdedit /enum | Select-String "allowedinmemorysettings" | ForEach-Object { $_.Line }
-                $isolatedContext = bcdedit /enum | Select-String "isolatedcontext" | ForEach-Object { $_.Line }
-                
-                if ($allowedInMemSettings -match "0x0" -and $isolatedContext -match "No") {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    bcdedit /set allowedinmemorysettings 0x0
-                    bcdedit /set isolatedcontext No
-                    Write-Output "Disable Kernel Memory Mitigations Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Kernel Memory Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    bcdedit /deletevalue allowedinmemorysettings
-                    bcdedit /deletevalue isolatedcontext
-                    Write-Output "Disable Kernel Memory Mitigations Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Kernel Memory Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_dma_protection() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisableDMAProtection,
-        "Disable DMA Protection and Core Isolation".to_string(),
-        "Disables DMA memory protection and core isolation (virtualization-based protection) to enhance system performance. This tweak may reduce security by allowing direct memory access and weakening core isolation protections.".to_string(),
-        TweakCategory::Security,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $vsmLaunchType = bcdedit /enum | Select-String "vsmlaunchtype" | ForEach-Object { $_.Line }
-                $vmSetting = bcdedit /enum | Select-String "vm" | ForEach-Object { $_.Line }
-                
-                $fvePath = "HKLM:\SOFTWARE\Policies\Microsoft\FVE"
-                $deviceGuardPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard"
-                
-                $disableExternalDMA = (Get-ItemProperty -Path $fvePath -Name "DisableExternalDMAUnderLock" -ErrorAction SilentlyContinue).DisableExternalDMAUnderLock
-                $enableVBS = (Get-ItemProperty -Path $deviceGuardPath -Name "EnableVirtualizationBasedSecurity" -ErrorAction SilentlyContinue).EnableVirtualizationBasedSecurity
-                $hvCIMATRequired = (Get-ItemProperty -Path $deviceGuardPath -Name "HVCIMATRequired" -ErrorAction SilentlyContinue).HVCIMATRequired
-                
-                if ($vsmLaunchType -match "Off" -and $vmSetting -match "No" -and $disableExternalDMA -eq 0 -and $enableVBS -eq 0 -and $hvCIMATRequired -eq 0) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    bcdedit /set vsmlaunchtype Off
-                    bcdedit /set vm No
-
-                    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\FVE" -Name "DisableExternalDMAUnderLock" -Value 0 -PropertyType DWord -Force | Out-Null
-                    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -Value 0 -PropertyType DWord -Force | Out-Null
-                    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard" -Name "HVCIMATRequired" -Value 0 -PropertyType DWord -Force | Out-Null
-
-                    Write-Output "Disable DMA Protection and Core Isolation Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable DMA Protection and Core Isolation Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    bcdedit /deletevalue vsmlaunchtype
-                    bcdedit /deletevalue vm
-
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\FVE" -Name "DisableExternalDMAUnderLock" -ErrorAction SilentlyContinue
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -ErrorAction SilentlyContinue
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard" -Name "HVCIMATRequired" -ErrorAction SilentlyContinue
-
-                    Write-Output "Disable DMA Protection and Core Isolation Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable DMA Protection and Core Isolation Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_process_kernel_mitigations() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisableProcessKernelMitigations,
-        "Disable Process and Kernel Mitigations".to_string(),
-        "Disables several process and kernel mitigations to improve performance. This includes disabling exception chain validation, SEHOP, CFG, and removing Image File Execution Options. **Warning:** These changes can significantly weaken system security and may cause instability or crashes.".to_string(),
-        TweakCategory::Security,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $disableExceptionChainValidation = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DisableExceptionChainValidation" -ErrorAction SilentlyContinue).DisableExceptionChainValidation
-                $kernelSEHOPEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KernelSEHOPEnabled" -ErrorAction SilentlyContinue).KernelSEHOPEnabled
-                $enableCfg = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "EnableCfg" -ErrorAction SilentlyContinue).EnableCfg
-                
-                $imageFileExecOptions = Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options" -ErrorAction SilentlyContinue
-                
-                if ($disableExceptionChainValidation -eq 1 -and $kernelSEHOPEnabled -eq 0 -and $enableCfg -eq 0 -and $imageFileExecOptions -eq $null) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    # Disable Exception Chain Validation and SEHOP
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DisableExceptionChainValidation" -Value 1 -Type DWord -Force
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KernelSEHOPEnabled" -Value 0 -Type DWord -Force
-                    
-                    # Disable Control Flow Guard
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "EnableCfg" -Value 0 -Type DWord -Force
-                    
-                    # Remove Image File Execution Options
-                    Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options" -Recurse -ErrorAction SilentlyContinue
-                    
-                    Write-Output "Disable Process and Kernel Mitigations Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Process and Kernel Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    # Re-enable Exception Chain Validation and SEHOP
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "DisableExceptionChainValidation" -ErrorAction SilentlyContinue
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "KernelSEHOPEnabled" -ErrorAction SilentlyContinue
-                    
-                    # Re-enable Control Flow Guard
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "EnableCfg" -ErrorAction SilentlyContinue
-                    
-                    Write-Output "Disable Process and Kernel Mitigations Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Process and Kernel Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn realtime_priority_csrss() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::RealtimePriorityCsrss,
-        "Set Realtime Priority for csrss.exe".to_string(),
-        "Configures the `csrss.exe` process to use realtime CPU and I/O priorities, aiming to improve system performance and responsiveness. **Caution:** Improper configuration can lead to system instability.".to_string(),
-        TweakCategory::System,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $csrssPerfOptions = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -ErrorAction SilentlyContinue
-                if ($csrssPerfOptions.CpuPriorityClass -eq 4 -and $csrssPerfOptions.IoPriority -eq 3) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -Force | Out-Null
-                    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -Name "CpuPriorityClass" -Value 4 -Type DWord
-                    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -Name "IoPriority" -Value 3 -Type DWord
-                    Write-Output "Set Realtime Priority for csrss.exe Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Set Realtime Priority for csrss.exe Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -Name "CpuPriorityClass" -ErrorAction SilentlyContinue
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\csrss.exe\PerfOptions" -Name "IoPriority" -ErrorAction SilentlyContinue
-                    Write-Output "Set Realtime Priority for csrss.exe Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Set Realtime Priority for csrss.exe Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
 pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
     Tweak::new(
         TweakId::DisableRamCompression,
@@ -1004,285 +580,7 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
             ),
             target_state: Some("Enabled".to_string()),
         }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_ntfs_refs_mitigations() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisableNTFSREFSMitigations,
-        "Disable Additional NTFS/ReFS Mitigations".to_string(),
-        "Disables additional mitigations for NTFS and ReFS file systems by setting the `ProtectionMode` registry value to `0`. This can improve file system performance but may reduce security and data integrity features.".to_string(),
-        TweakCategory::Security,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-                $protectionMode = (Get-ItemProperty -Path $path -Name "ProtectionMode" -ErrorAction SilentlyContinue).ProtectionMode
-                
-                if ($protectionMode -eq 0) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "ProtectionMode" -Value 0 -Type DWord -Force
-                    Write-Output "Disable Additional NTFS/ReFS Mitigations Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Additional NTFS/ReFS Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name "ProtectionMode" -ErrorAction SilentlyContinue
-                    Write-Output "Disable Additional NTFS/ReFS Mitigations Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Additional NTFS/ReFS Mitigations Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn enable_x2apic_memory_mapping() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::EnableX2ApicMemoryMapping,
-        "Enable X2Apic and Memory Mapping for PCI-E Devices".to_string(),
-        "Enables X2APIC and memory mapping for PCI-E devices by setting various BCDEdit options. For optimal results, MSI mode should be enabled for all devices using the MSI utility or manually. This tweak enhances CPU and device communication but requires careful configuration of device settings.".to_string(),
-        TweakCategory::System,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $x2apicPolicy = bcdedit /enum | Select-String "x2apicpolicy" | ForEach-Object { $_.Line }
-                $configAccessPolicy = bcdedit /enum | Select-String "configaccesspolicy" | ForEach-Object { $_.Line }
-                $msiSetting = bcdedit /enum | Select-String "MSI" | ForEach-Object { $_.Line }
-                $usePhysicalDestination = bcdedit /enum | Select-String "usephysicaldestination" | ForEach-Object { $_.Line }
-                $useFirmwarePCISettings = bcdedit /enum | Select-String "usefirmwarepcisettings" | ForEach-Object { $_.Line }
-                
-                if ($x2apicPolicy -match "Enable" -and $configAccessPolicy -match "Default" -and $msiSetting -match "Default" -and $usePhysicalDestination -match "No" -and $useFirmwarePCISettings -match "No") {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    bcdedit /set x2apicpolicy Enable
-                    bcdedit /set configaccesspolicy Default
-                    bcdedit /set MSI Default
-                    bcdedit /set usephysicaldestination No
-                    bcdedit /set usefirmwarepcisettings No
-                    Write-Output "Enable X2Apic and Memory Mapping for PCI-E Devices Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Enable X2Apic and Memory Mapping Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    bcdedit /deletevalue x2apicpolicy
-                    bcdedit /deletevalue configaccesspolicy
-                    bcdedit /deletevalue MSI
-                    bcdedit /deletevalue usephysicaldestination
-                    bcdedit /deletevalue usefirmwarepcisettings
-                    Write-Output "Enable X2Apic and Memory Mapping for PCI-E Devices Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Enable X2Apic and Memory Mapping Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn force_contiguous_memory_dx_kernel() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::ForceContiguousMemoryDxKernel,
-        "Force Contiguous Memory Allocation in DirectX Graphics Kernel".to_string(),
-        "Forces the DirectX Graphics Kernel to allocate memory contiguously by setting the `DpiMapIommuContiguous` registry value to `1`. This tweak aims to reduce microstuttering and improve graphics performance.".to_string(),
-        TweakCategory::Graphics,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $path = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
-                $dpiMapIommuContiguous = (Get-ItemProperty -Path $path -Name "DpiMapIommuContiguous" -ErrorAction SilentlyContinue).DpiMapIommuContiguous
-                
-                if ($dpiMapIommuContiguous -eq 1) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DpiMapIommuContiguous" -Value 1 -Type DWord -Force
-                    Write-Output "Force Contiguous Memory Allocation in DirectX Graphics Kernel Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Force Contiguous Memory Allocation in DirectX Graphics Kernel Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "DpiMapIommuContiguous" -ErrorAction SilentlyContinue
-                    Write-Output "Force Contiguous Memory Allocation in DirectX Graphics Kernel Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Force Contiguous Memory Allocation in DirectX Graphics Kernel Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn force_contiguous_memory_nvidia() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::ForceContiguousMemoryNvidia,
-        "Force Contiguous Memory Allocation in NVIDIA Driver".to_string(),
-        "Forces the NVIDIA driver to allocate memory contiguously by setting the `PreferSystemMemoryContiguous` registry value to `1`. This can improve graphics performance but requires specifying the correct device path (e.g., `0000`).".to_string(),
-        TweakCategory::Graphics,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $gpuKey = Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" | Select-Object -First 1
-                $preferSystemMemContiguous = (Get-ItemProperty -Path $gpuKey.PSPath -Name "PreferSystemMemoryContiguous" -ErrorAction SilentlyContinue).PreferSystemMemoryContiguous
-                
-                if ($preferSystemMemContiguous -eq 1) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    $gpuKey = Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" | Select-Object -First 1
-                    Set-ItemProperty -Path $gpuKey.PSPath -Name "PreferSystemMemoryContiguous" -Value 1 -Type DWord -Force
-                    Write-Output "Force Contiguous Memory Allocation in NVIDIA Driver Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Force Contiguous Memory Allocation in NVIDIA Driver Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    $gpuKey = Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" | Select-Object -First 1
-                    Remove-ItemProperty -Path $gpuKey.PSPath -Name "PreferSystemMemoryContiguous" -ErrorAction SilentlyContinue
-                    Write-Output "Force Contiguous Memory Allocation in NVIDIA Driver Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Force Contiguous Memory Allocation in NVIDIA Driver Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
-        TweakWidget::Switch,
-    )
-}
-
-pub fn disable_application_telemetry() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
-        TweakId::DisableApplicationTelemetry,
-        "Disable Application Telemetry".to_string(),
-        "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
-        TweakCategory::Telemetry,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Powershell(PowershellTweak {
-            read_script: Some(
-                r#"
-                $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat"
-                $aitEnable = (Get-ItemProperty -Path $path -Name "AITEnable" -ErrorAction SilentlyContinue).AITEnable
-                
-                if ($aitEnable -eq 0) {
-                    "Enabled"
-                } else {
-                    "Disabled"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            apply_script: Some(
-                r#"
-                try {
-                    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "AITEnable" -Value 0 -PropertyType DWord -Force | Out-Null
-                    Write-Output "Disable Application Telemetry Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Application Telemetry Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            undo_script: Some(
-                r#"
-                try {
-                    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "AITEnable" -ErrorAction SilentlyContinue
-                    Write-Output "Disable Application Telemetry Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Application Telemetry Tweaks: $_"
-                }
-                "#
-                .trim()
-                .to_string(),
-            ),
-            target_state: Some("Enabled".to_string()),
-        }),
-        false,
+        true,
         TweakWidget::Switch,
     )
 }
@@ -1334,7 +632,7 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
             ),
             target_state: Some("Enabled".to_string()),
         }),
-        false,
+        true,
         TweakWidget::Switch,
     )
 }
@@ -1386,7 +684,281 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
             ),
             target_state: Some("Enabled".to_string()),
         }),
-        false,
+        true,
         TweakWidget::Switch,
+    )
+}
+
+pub fn disable_pagefile() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisablePagefile,
+        "Disable Pagefile".to_string(),
+        "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.".to_string(),
+        TweakCategory::Memory,
+        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: Some(
+                r#"
+                $pagefileSettings = Get-WmiObject -Class Win32_PageFileUsage | Select-Object -ExpandProperty AllocatedBaseSize
+
+                if ($pagefileSettings -eq 0) {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+              
+                .to_string(),
+            ),
+            apply_script: Some(
+                "fsutil behavior set encryptpagingfile 0".to_string(),
+            ),
+            undo_script: Some(
+               "fsutil behavior set encryptpagingfile 1".to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        }),
+        true,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableSpeculativeExecutionMitigations,
+        "Disable Speculative Execution Mitigations".to_string(),
+        "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
+        TweakCategory::Security,
+        vec!["https://www.tenforums.com/tutorials/5918-turn-off-data-execution-prevention-dep-windows.html".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: Some(
+                r#"
+                $featureSettingsOverride = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -ErrorAction SilentlyContinue).FeatureSettingsOverride
+                $featureSettingsOverrideMask = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverrideMask -ErrorAction SilentlyContinue).FeatureSettingsOverrideMask
+
+                if ($featureSettingsOverride -eq 3 -and $featureSettingsOverrideMask -eq 3) {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            apply_script: Some(
+                r#"
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -Value 3
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverrideMask -Value 3
+                "#
+                .trim()
+                .to_string(),
+            ),
+            undo_script: Some(
+                r#"
+                Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverrideMask -ErrorAction SilentlyContinue
+                "#
+                .trim()
+                .to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        }),
+        true,
+        TweakWidget::Switch,
+    )
+}
+
+
+
+pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableDataExecutionPrevention,
+        "Disable Data Execution Prevention".to_string(),
+        "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.".to_string(),
+        TweakCategory::Security,
+        vec!["https://www.tenforums.com/tutorials/5918-turn-off-data-execution-prevention-dep-windows.html".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: Some(
+                r#"
+                $depSettings = bcdedit /enum | Select-String 'nx'
+                
+                if ($depSettings -match 'AlwaysOff') {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            apply_script: Some(
+                "bcdedit /set {current} nx AlwaysOff".to_string(),
+            ),
+            undo_script: Some(
+                "bcdedit /set {current} nx OptIn".to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        }),
+        true,
+        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_process_idle_states()-> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::DisableProcessIdleStates,
+        "Disable Process Idle States".to_string(),
+        "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.".to_string(),
+        TweakCategory::Power,
+        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: Some(
+                r#"
+                $processorIdleStates = powercfg /query scheme_current sub_processor | Select-String 'Processor Idle Disable'
+                
+                if ($processorIdleStates -match 'Processor Idle Disable: 1') {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            apply_script: Some(
+                "powercfg -setacvalueindex scheme_current sub_processor 5d76a2ca-e8c0-402f-a133-2158492d58ad 1".to_string(),
+            ),
+            undo_script: Some(
+                "powercfg -setacvalueindex scheme_current sub_processor 5d76a2ca-e8c0-402f-a133-2158492d58ad 0".to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        }),
+        true,
+        TweakWidget::Switch,
+    )
+}
+
+
+pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
+    Tweak::new(
+        TweakId::KillAllNonCriticalServices,
+        "Kill All Non-Critical Services".to_string(),
+        "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.".to_string(),
+        TweakCategory::System,
+        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
+        TweakMethod::Powershell(PowershellTweak {
+            read_script: None,
+            apply_script: Some(
+                r#"
+                $services = @(
+                    "AdobeARMservice",
+                    "AdobeFlashPlayerUpdateSvc",
+                    "AdobeUpdateService",
+                    "AeLookupSvc",
+                    "ALG",
+                    "AppIDSvc",
+                    "Appinfo",
+                    "AppMgmt",
+                    "AppReadiness",
+                    "AppXSvc",
+                    "AssignedAccessManagerSvc",
+                    "AudioEndpointBuilder",
+                    "Audiosrv",
+                    "autotimesvc",
+                    "AxInstSV",
+                    "BDESVC",
+                    "BFE",
+                    "BITS",
+                    "BrokerInfrastructure",
+                    "Browser",
+                    "BthAvctpSvc"
+                )
+
+                $failedServices = @()
+
+                for ($i = 1; $i -le 5; $i++) {
+                    Write-Output "Attempt $i to stop non-critical services..."
+                    foreach ($service in $services) {
+                        # Check if the service is already stopped
+                        $serviceStatus = (Get-Service -Name $service -ErrorAction SilentlyContinue).Status
+                        if ($serviceStatus -ne 'Stopped') {
+                            try {
+                                Stop-Service -Name $service -Force -ErrorAction Stop
+                                Write-Output "Stopped service: $service"
+                            } catch {
+                                Write-Output "Failed to stop service: $service. Attempt $i/5."
+                            }
+                        } else {
+                            Write-Output "Service already stopped: $service"
+                        }
+                    }
+                    # Optional: Add a short delay between attempts
+                    Start-Sleep -Seconds 2
+                }
+
+                # After all attempts, identify services that are still running
+                foreach ($service in $services) {
+                    $serviceStatus = (Get-Service -Name $service -ErrorAction SilentlyContinue).Status
+                    if ($serviceStatus -ne 'Stopped') {
+                        $failedServices += $service
+                    }
+                }
+
+                if ($failedServices.Count -gt 0) {
+                    Write-Output "The following services failed to be stopped after 5 attempts:"
+                    foreach ($failedService in $failedServices) {
+                        Write-Output "- $failedService"
+                    }
+                } else {
+                    Write-Output "All specified non-critical services have been successfully stopped."
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            undo_script: Some(
+                r#"
+                $services = @(
+                    "AdobeARMservice",
+                    "AdobeFlashPlayerUpdateSvc",
+                    "AdobeUpdateService",
+                    "AeLookupSvc",
+                    "ALG",
+                    "AppIDSvc",
+                    "Appinfo",
+                    "AppMgmt",
+                    "AppReadiness",
+                    "AppXSvc",
+                    "AssignedAccessManagerSvc",
+                    "AudioEndpointBuilder",
+                    "Audiosrv",
+                    "autotimesvc",
+                    "AxInstSV",
+                    "BDESVC",
+                    "BFE",
+                    "BITS",
+                    "BrokerInfrastructure",
+                    "Browser",
+                    "BthAvctpSvc"
+                )
+
+                foreach ($service in $services) {
+                    try {
+                        Start-Service -Name $service -ErrorAction Stop
+                        Write-Output "Started service: $service"
+                    } catch {
+                        Write-Output "Failed to start service: $service."
+                    }
+                }
+
+                Write-Output "All non-critical services started."
+                "#
+                .trim()
+                .to_string(),
+            ),
+            target_state: None,
+        }),
+        false,
+        TweakWidget::Button,
     )
 }
