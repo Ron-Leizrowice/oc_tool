@@ -1,5 +1,5 @@
 // src/main.rs
-
+mod power;
 mod tweaks;
 mod utils;
 mod widgets;
@@ -8,11 +8,12 @@ mod worker;
 use std::sync::{Arc, Mutex};
 
 use eframe::{egui, App, Frame, NativeOptions};
-use egui::Sense;
+use egui::{vec2, Button, FontId, RichText, Sense};
+use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
 use tracing::{error, info, span, trace, warn, Level};
-use tweaks::{tweak_list, Tweak, TweakCategory, TweakStatus};
-use utils::{is_elevated, reboot_system};
+use tweaks::{tweak_list, Tweak, TweakCategory, TweakId, TweakStatus};
+use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
     button::{action_button, ButtonState},
     switch::toggle_switch,
@@ -23,14 +24,14 @@ use crate::worker::{Task, WorkerPool, WorkerResult};
 
 // Constants for layout and spacing
 const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
-const WINDOW_HEIGHT: f32 = 1000.0;
+const WINDOW_HEIGHT: f32 = 840.0;
 
 // Controls the dimensions of each tweak container.
 const TWEAK_CONTAINER_HEIGHT: f32 = 30.0;
 const TWEAK_CONTAINER_WIDTH: f32 = 280.0;
 
 /// Controls the padding for tweak containers.
-const CONTAINER_VERTICAL_PADDING: f32 = 5.0;
+const CONTAINER_VERTICAL_PADDING: f32 = 0.0;
 const CONTAINER_INTERNAL_PADDING: f32 = 4.0;
 
 // Horizontal spacing between grid columns
@@ -39,9 +40,14 @@ const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
 // Status Bar Padding
 const STATUS_BAR_PADDING: f32 = 10.0; // Padding inside the status bar
 
-struct MyApp {
-    tweaks: Vec<Arc<Mutex<Tweak>>>,
-    worker_pool: WorkerPool,
+/// Represents your application's main structure.
+pub struct MyApp {
+    pub tweaks: Vec<Arc<Mutex<Tweak>>>,
+    pub worker_pool: WorkerPool,
+
+    // Power management fields
+    pub power_state: PowerState,
+    pub slow_mode: bool,
 }
 
 impl MyApp {
@@ -76,6 +82,8 @@ impl MyApp {
         Self {
             tweaks,
             worker_pool,
+            power_state: read_power_state().unwrap(),
+            slow_mode: false,
         }
     }
 
@@ -203,8 +211,6 @@ impl MyApp {
     }
 
     fn draw_ui(&self, ui: &mut egui::Ui) {
-        // Group Tweaks by Category
-
         // Create a two-column grid with custom spacing
         egui::Grid::new("main_columns_grid")
             .num_columns(2)
@@ -357,30 +363,34 @@ impl MyApp {
     }
 
     /// Renders the status bar at the bottom with divisions.
-    fn draw_status_bar(&self, ctx: &egui::Context) {
+    fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.add_space(STATUS_BAR_PADDING); // Apply the constant
 
             ui.horizontal(|ui| {
-                // First Division: General status
-                ui.label("Status: All systems operational");
-
+                // **Version Label**
+                ui.label(RichText::new("v1.0.1").font(FontId::proportional(16.0)));
                 ui.separator(); // Vertical separator
 
-                // Second Division: Tweaks pending restart
-
+                // Tweaks pending restart
                 let pending_reboot_count = self.count_tweaks_pending_reboot();
 
-                ui.label(format!(
-                    "{} tweak{} pending restart",
-                    pending_reboot_count,
-                    if pending_reboot_count != 1 { "s" } else { "" }
-                ));
+                ui.label(
+                    RichText::new(format!(
+                        "{} tweak{} pending restart",
+                        pending_reboot_count,
+                        if pending_reboot_count != 1 { "s" } else { "" }
+                    ))
+                    .font(FontId::proportional(16.0)),
+                );
 
                 // If there are pending reboots, show a reboot button
                 if pending_reboot_count > 0 {
                     ui.separator(); // Vertical separator
-                    if ui.button("Reboot Now").clicked() {
+                    if ui
+                        .add(Button::new("Restart Windows").min_size(vec2(40.0, 30.0)))
+                        .clicked()
+                    {
                         // Show confirmation dialog
                         if tinyfiledialogs::message_box_yes_no(
                             "Confirm Reboot",
@@ -401,11 +411,57 @@ impl MyApp {
                         }
                     }
                 }
-
+                // Right-aligned status bar items
                 ui.separator(); // Vertical separator
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // **Reboot into BIOS Button**
+                    if ui
+                        .add(Button::new("Reboot into BIOS").min_size(vec2(40.0, 30.0)))
+                        .clicked()
+                    {
+                        match reboot_into_bios() {
+                            Ok(_) => {
+                                info!("Rebooting into BIOS settings...");
+                            }
+                            Err(e) => {
+                                error!("Failed to reboot into BIOS: {:?}", e);
+                            }
+                        }
+                    }
 
-                // Third Division: Additional info
-                ui.label("Version: 1.0.0");
+                    // **Slow Mode Toggle Button**
+                    let slow_mode_label = match self.slow_mode {
+                        true => "Slow Mode: ON",
+                        false => "Slow Mode: OFF",
+                    };
+
+                    if ui
+                        .add(Button::new(slow_mode_label).min_size(vec2(40.0, 30.0)))
+                        .on_hover_text(SLOW_MODE_DESCRIPTION)
+                        .clicked()
+                    {
+                        match self.slow_mode {
+                            false => match self.enable_slow_mode() {
+                                Ok(_) => {
+                                    info!("Slow mode enabled successfully.");
+                                    self.slow_mode = true;
+                                }
+                                Err(e) => {
+                                    error!("Failed to enable slow mode: {:?}", e);
+                                }
+                            },
+                            true => match self.disable_slow_mode() {
+                                Ok(_) => {
+                                    info!("Slow mode disabled successfully.");
+                                    self.slow_mode = false;
+                                }
+                                Err(e) => {
+                                    error!("Failed to disable slow mode: {:?}", e);
+                                }
+                            },
+                        }
+                    }
+                });
             });
 
             ui.add_space(STATUS_BAR_PADDING); // Apply the constant
@@ -436,10 +492,21 @@ impl App for MyApp {
 
     /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        info!("Application is exiting. Sending shutdown messages to workers.");
-        // Send shutdown messages to all workers
+        // Disable low res mode
+        self.dispatch_task(
+            &self
+                .tweaks
+                .iter()
+                .find(|tweak| tweak.lock().unwrap().id == TweakId::LowResMode)
+                .unwrap()
+                .clone(),
+            false,
+        );
+        // disable slow mode
+        self.disable_slow_mode().unwrap();
+
+        // close the worker pool
         self.worker_pool.shutdown(num_cpus::get());
-        info!("Shutdown messages sent to all workers.");
     }
 }
 
