@@ -39,35 +39,14 @@ impl TweakMethod for LowResMode {
     }
 
     fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        let result = set_display_settings(DisplaySettingsType {
-            width: 640,
-            height: 480,
-            refresh_rate: 60,
-        });
+        let result = set_display_settings(self.target_state.clone());
         match result {
-            0 => {
-                let result = set_display_settings(DisplaySettingsType {
-                    width: 640,
-                    height: 480,
-                    refresh_rate: 30,
-                });
-
-                match result {
-                    0 => Ok(()),
-                    _ => Err(anyhow::anyhow!(
-                        "{:?} -> Failed to apply display settings. Error code: {}",
-                        id,
-                        result
-                    )),
-                }
-            }
-            _ => {
-                Err(anyhow::anyhow!(
-                    "{:?} -> Failed to apply display settings. Error code: {}",
-                    id,
-                    result
-                ))
-            }
+            0 => Ok(()),
+            _ => Err(anyhow::anyhow!(
+                "{:?} -> Failed to apply display settings. Error code: {}",
+                id,
+                result
+            )),
         }
     }
 

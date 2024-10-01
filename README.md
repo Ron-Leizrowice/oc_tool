@@ -1,10 +1,14 @@
 # OC Tool (pending a better name)
 
-## What does this do?
+## What does this tool do?
 
-Allows you to apply an assortment of experimental Windows tweaks, and undo them. 
+- Allows you to apply an assortment of experimental Windows tweaks, and undo them. 
+- They might improve performance, or make things worse, depending on your OS, hardware, and the benchmark you are running.
 
-They might improve performance, or make things worse, depending on the benchmark you are running.
+## What is supported?
+
+- Currently only Windows 11 is fully supported.
+- Windows 10 support is experimental.
 
 ### How to use
 
