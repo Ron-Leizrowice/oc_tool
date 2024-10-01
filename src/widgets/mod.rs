@@ -4,8 +4,8 @@ pub mod button;
 pub mod switch;
 
 /// Enum representing the different widget types for a tweak.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TweakWidget {
-    Switch,
-    Button,
+    ToggleSwitch,
+    ActionButton,
 }

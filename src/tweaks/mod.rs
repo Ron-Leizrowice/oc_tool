@@ -1,47 +1,25 @@
 // src/tweaks/mod.rs
-
 pub mod group_policy_tweaks;
+pub mod method;
 pub mod powershell_tweaks;
 pub mod registry_tweaks;
+pub mod rust_tweaks;
 
 use std::{
     hash::Hash,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{Arc, Mutex},
 };
 
-use anyhow::Error;
-use group_policy_tweaks::{se_lock_memory_privilege, GroupPolicyTweak};
-use powershell_tweaks::{
-    additional_kernel_worker_threads, aggressive_dpc_handling, disable_data_execution_prevention,
-    disable_dynamic_tick, disable_local_firewall, disable_pagefile, disable_process_idle_states,
-    disable_ram_compression, disable_speculative_execution_mitigations, disable_success_auditing,
-    enable_ultimate_performance_plan, enhanced_kernel_performance, kill_all_non_critical_services,
-    process_idle_tasks, PowershellTweak,
-};
-use registry_tweaks::{
-    disable_application_telemetry, disable_core_parking, disable_driver_paging,
-    disable_hw_acceleration, disable_low_disk_space_checks, disable_ntfs_tunnelling,
-    disable_page_file_encryption, disable_prefetcher, disable_windows_defender,
-    disable_windows_error_reporting, distribute_timers, dont_verify_random_drivers,
-    enable_large_system_cache, svc_host_split_threshold, system_responsiveness, thread_dpc_disable,
-    win32_priority_separation, RegistryTweak,
-};
+use group_policy_tweaks::GroupPolicyTweak;
+use method::TweakMethod;
+use powershell_tweaks::PowershellTweak;
+use registry_tweaks::RegistryTweak;
 
 use crate::widgets::TweakWidget;
 
-/// Enum representing the method used to apply or revert a tweak.
-/// - `Registry`: Modifies Windows Registry keys.
-/// - `GroupPolicy`: Adjusts Group Policy settings.
-/// - `Powershell`: Executes PowerShell or other scripts.
-#[derive(Clone, Debug)]
-pub enum TweakMethod {
-    Registry(RegistryTweak),
-    GroupPolicy(GroupPolicyTweak),
-    Powershell(PowershellTweak),
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TweakCategory {
+    Action,
     System,
     Power,
     Kernel,
@@ -50,6 +28,27 @@ pub enum TweakCategory {
     Graphics,
     Telemetry,
     Storage,
+}
+
+impl TweakCategory {
+    pub fn left() -> Vec<Self> {
+        vec![
+            TweakCategory::System,
+            TweakCategory::Kernel,
+            TweakCategory::Memory,
+            TweakCategory::Storage,
+        ]
+    }
+
+    pub fn right() -> Vec<Self> {
+        vec![
+            TweakCategory::Graphics,
+            TweakCategory::Power,
+            TweakCategory::Security,
+            TweakCategory::Telemetry,
+            TweakCategory::Action,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,7 +65,7 @@ pub enum TweakId {
     DisableNtfsTunnelling,
     DistributeTimers,
     AdditionalKernelWorkerThreads,
-    DisableDynamicTick,
+    DisableHPET,
     AggressiveDpcHandling,
     EnhancedKernelPerformance,
     DisableRamCompression,
@@ -86,33 +85,36 @@ pub enum TweakId {
     DisablePageFileEncryption,
     DisableProcessIdleStates,
     KillAllNonCriticalServices,
+    DisableIntelTSX,
+    DisableWindowsMaintenance,
+    KillExplorer,
+    HighPerformanceVisualSettings,
+    LowResMode,
 }
 
 /// Represents a single tweak that can be applied to the system.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Tweak {
     /// Unique identifier for the tweak.
     pub id: TweakId,
     /// Display name of the tweak.
     pub name: String,
-    /// Description of the tweak and its effects, shown in hover toolip.
+    /// Description of the tweak and its effects, shown in hover tooltip.
     pub description: String,
     /// Category of the tweak, used for grouping tweaks in the UI.
     pub category: TweakCategory,
-    /// List of citations for the tweak, shown in the tweak details.
-    pub citations: Vec<String>,
     /// The method used to apply or revert the tweak.
-    pub method: TweakMethod,
+    pub method: Arc<dyn TweakMethod>,
     /// The widget to use for each tweak
     pub widget: TweakWidget,
     /// Indicates whether the tweak is currently enabled.
-    pub enabled: Arc<AtomicBool>,
+    pub enabled: Arc<Mutex<bool>>,
     /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
-    pub status: TweakStatus,
+    pub status: Arc<Mutex<TweakStatus>>,
     /// Whether the tweak requires restarting the system to take effect.
     pub requires_reboot: bool,
     /// If the tweak has been applied during this session, but still requires a reboot.
-    pub pending_reboot: Arc<AtomicBool>,
+    pub pending_reboot: Arc<Mutex<bool>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,112 +125,175 @@ pub enum TweakStatus {
 }
 
 impl Tweak {
-    pub fn new(
+    pub fn registry_tweak(
         id: TweakId,
         name: String,
         description: String,
         category: TweakCategory,
-        citations: Vec<String>,
-        method: TweakMethod,
+        method: RegistryTweak,
         requires_reboot: bool,
-        widget: TweakWidget,
     ) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
             id,
             name,
             description,
             category,
-            citations,
-            method,
-            widget,
-            enabled: Arc::new(AtomicBool::new(false)),
-            status: TweakStatus::Idle,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            enabled: Arc::new(Mutex::new(false)),
+            status: Arc::new(Mutex::new(TweakStatus::Idle)),
             requires_reboot,
-            pending_reboot: Arc::new(AtomicBool::new(false)),
+            pending_reboot: Arc::new(Mutex::new(false)),
         }))
     }
 
-    /// Checks if the tweak is currently enabled by invoking the appropriate method.
-    pub fn check_initial_state(&self) -> Result<bool, Error> {
-        match &self.method {
-            TweakMethod::Registry(registry_tweak) => registry_tweak
-                .is_registry_tweak_enabled(self.id)
-                .map_err(Error::from),
-            TweakMethod::GroupPolicy(group_policy_tweak) => group_policy_tweak
-                .is_group_policy_tweak_enabled(self.id)
-                .map_err(Error::from),
-            TweakMethod::Powershell(powershell_tweak) => powershell_tweak
-                .is_powershell_script_enabled(self.id)
-                .map_err(Error::from),
-        }
+    pub fn powershell(
+        id: TweakId,
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: PowershellTweak,
+        requires_reboot: bool,
+    ) -> Arc<Mutex<Self>> {
+        let widget = match method.undo_script {
+            Some(_) => TweakWidget::ToggleSwitch,
+            None => TweakWidget::ActionButton,
+        };
+
+        Arc::new(Mutex::new(Self {
+            id,
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget,
+            enabled: Arc::new(Mutex::new(false)),
+            status: Arc::new(Mutex::new(TweakStatus::Idle)),
+            requires_reboot,
+            pending_reboot: Arc::new(Mutex::new(false)),
+        }))
     }
 
-    /// Applies the tweak by invoking the appropriate method.
-    pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.method {
-            TweakMethod::Registry(registry_tweak) => {
-                registry_tweak.apply_registry_tweak(self.id)?
-            }
-            TweakMethod::GroupPolicy(group_policy_tweak) => {
-                group_policy_tweak.apply_group_policy_tweak(self.id)?
-            }
-            TweakMethod::Powershell(powershell_tweak) => {
-                powershell_tweak.run_apply_script(self.id)?
-            }
-        }
-        Ok(())
+    pub fn group_policy(
+        id: TweakId,
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: GroupPolicyTweak,
+        requires_reboot: bool,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
+            id,
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            enabled: Arc::new(Mutex::new(false)),
+            status: Arc::new(Mutex::new(TweakStatus::Idle)),
+            requires_reboot,
+            pending_reboot: Arc::new(Mutex::new(false)),
+        }))
     }
-    /// Reverts the tweak by invoking the appropriate method.
-    pub fn revert(&self) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.method {
-            TweakMethod::Registry(registry_tweak) => {
-                registry_tweak.revert_registry_tweak(self.id)?
-            }
-            TweakMethod::GroupPolicy(group_policy_tweak) => {
-                group_policy_tweak.revert_group_policy_tweak(self.id)?
-            }
-            TweakMethod::Powershell(powershell_tweak) => {
-                powershell_tweak.run_undo_script(self.id)?
-            }
-        }
-        Ok(())
+
+    pub fn rust<M: TweakMethod + 'static>(
+        id: TweakId,
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: M,
+        requires_reboot: bool,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
+            id,
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            enabled: Arc::new(Mutex::new(false)),
+            status: Arc::new(Mutex::new(TweakStatus::Idle)),
+            requires_reboot,
+            pending_reboot: Arc::new(Mutex::new(false)),
+        }))
+    }
+
+    pub fn get_status(&self) -> TweakStatus {
+        self.status.lock().unwrap().clone()
+    }
+
+    pub fn set_status(&self, status: TweakStatus) {
+        *self.status.lock().unwrap() = status;
+    }
+
+    pub fn set_enabled(&self) {
+        *self.enabled.lock().unwrap() = true;
+    }
+
+    pub fn set_disabled(&self) {
+        *self.enabled.lock().unwrap() = false;
+    }
+
+    pub fn pending_reboot(&self) {
+        *self.pending_reboot.lock().unwrap() = true;
+    }
+
+    pub fn cancel_pending_reboot(&self) {
+        *self.pending_reboot.lock().unwrap() = false;
+    }
+
+    pub fn initial_state(&self) -> Result<bool, anyhow::Error> {
+        self.method.initial_state(self.id)
+    }
+
+    pub fn apply(&self) -> Result<(), anyhow::Error> {
+        self.method.apply(self.id)
+    }
+
+    pub fn revert(&self) -> Result<(), anyhow::Error> {
+        self.method.revert(self.id)
     }
 }
 
 /// Initializes all tweaks with their respective configurations.
-pub fn initialize_all_tweaks() -> Vec<Arc<Mutex<Tweak>>> {
+pub fn tweak_list() -> Vec<Arc<Mutex<Tweak>>> {
     vec![
-        enable_large_system_cache(),
-        system_responsiveness(),
-        disable_hw_acceleration(),
-        win32_priority_separation(),
-        disable_core_parking(),
-        process_idle_tasks(),
-        se_lock_memory_privilege(),
-        enable_ultimate_performance_plan(),
-        disable_low_disk_space_checks(),
-        disable_ntfs_tunnelling(),
-        distribute_timers(),
-        additional_kernel_worker_threads(),
-        disable_dynamic_tick(),
-        aggressive_dpc_handling(),
-        enhanced_kernel_performance(),
-        disable_ram_compression(),
-        disable_application_telemetry(),
-        disable_windows_error_reporting(),
-        disable_local_firewall(),
-        dont_verify_random_drivers(),
-        disable_driver_paging(),
-        disable_prefetcher(),
-        disable_success_auditing(),
-        thread_dpc_disable(),
-        svc_host_split_threshold(),
-        disable_pagefile(),
-        disable_speculative_execution_mitigations(),
-        disable_data_execution_prevention(),
-        disable_windows_defender(),
-        disable_page_file_encryption(),
-        disable_process_idle_states(),
-        kill_all_non_critical_services(),
+        rust_tweaks::low_res_mode(),
+        group_policy_tweaks::se_lock_memory_privilege(),
+        powershell_tweaks::process_idle_tasks(),
+        powershell_tweaks::enable_ultimate_performance_plan(),
+        powershell_tweaks::additional_kernel_worker_threads(),
+        powershell_tweaks::disable_hpet(),
+        powershell_tweaks::aggressive_dpc_handling(),
+        powershell_tweaks::enhanced_kernel_performance(),
+        powershell_tweaks::disable_ram_compression(),
+        powershell_tweaks::disable_pagefile(),
+        powershell_tweaks::disable_speculative_execution_mitigations(),
+        powershell_tweaks::disable_data_execution_prevention(),
+        powershell_tweaks::kill_explorer(),
+        powershell_tweaks::high_performance_visual_settings(),
+        powershell_tweaks::disable_local_firewall(),
+        powershell_tweaks::disable_process_idle_states(),
+        powershell_tweaks::kill_all_non_critical_services(),
+        powershell_tweaks::disable_success_auditing(),
+        registry_tweaks::enable_large_system_cache(),
+        registry_tweaks::system_responsiveness(),
+        registry_tweaks::disable_hw_acceleration(),
+        registry_tweaks::win32_priority_separation(),
+        registry_tweaks::disable_core_parking(),
+        registry_tweaks::disable_low_disk_space_checks(),
+        registry_tweaks::disable_ntfs_tunnelling(),
+        registry_tweaks::distribute_timers(),
+        registry_tweaks::disable_application_telemetry(),
+        registry_tweaks::disable_windows_error_reporting(),
+        registry_tweaks::dont_verify_random_drivers(),
+        registry_tweaks::disable_driver_paging(),
+        registry_tweaks::disable_prefetcher(),
+        registry_tweaks::thread_dpc_disable(),
+        registry_tweaks::svc_host_split_threshold(),
+        registry_tweaks::disable_windows_defender(),
+        registry_tweaks::disable_page_file_encryption(),
+        registry_tweaks::disable_intel_tsx(),
+        registry_tweaks::disable_windows_maintenance(),
     ]
 }

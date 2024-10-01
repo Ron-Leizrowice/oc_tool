@@ -7,8 +7,8 @@ use winreg::{
     RegKey,
 };
 
-use super::{Tweak, TweakCategory, TweakMethod};
-use crate::{errors::RegistryError, tweaks::TweakId, widgets::TweakWidget};
+use super::{Tweak, TweakCategory};
+use crate::tweaks::{method::TweakMethod, TweakId};
 
 /// Represents a registry tweak, including the registry key, value name, desired value, and default value.
 /// If `default_value` is `None`, the tweak is considered enabled if the registry value exists.
@@ -34,6 +34,80 @@ pub enum RegistryKeyValue {
 }
 
 impl RegistryTweak {
+    /// Reads the current value of the specified registry key.
+    ///
+    /// # Parameters
+    ///
+    /// - `id`: The unique identifier for the tweak.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(RegistryKeyValue)` with the current value.
+    /// - `Err(RegistryError)` if the operation fails.
+    pub fn read_current_value(&self, id: TweakId) -> Result<RegistryKeyValue, anyhow::Error> {
+        tracing::trace!("{:?} -> Reading current value of registry tweak.", id);
+
+        // Extract the hive from the key path (e.g., "HKEY_LOCAL_MACHINE")
+        let hive = self
+            .path
+            .split('\\')
+            .next()
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"));
+
+        // Map the hive string to the corresponding RegKey
+        let hkey = match hive {
+            Ok("HKEY_LOCAL_MACHINE") => RegKey::predef(HKEY_LOCAL_MACHINE),
+            Ok("HKEY_CURRENT_USER") => RegKey::predef(HKEY_CURRENT_USER),
+            other => {
+                tracing::error!("Unsupported registry hive '{:?}'.", other);
+                return Err(anyhow::Error::msg(format!(
+                    "Unsupported registry hive '{:?}'.",
+                    other
+                )));
+            }
+        };
+
+        // Extract the subkey path (everything after the hive)
+        let subkey_path = self
+            .path
+            .split_once('\\')
+            .map(|(_, path)| path)
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
+
+        // Attempt to open the subkey with read permissions
+        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_READ) {
+            Ok(key) => {
+                tracing::debug!(
+                    "{:?} -> Opened registry key '{}' for reading.",
+                    id,
+                    self.path
+                );
+                key
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = ?e,
+                    "{:?} -> Failed to open registry key '{}' for reading.",
+                    id, self.path
+                );
+                return Err(anyhow::Error::from(e));
+            }
+        };
+
+        // Depending on the expected type, read the value
+        match &self.tweak_value {
+            RegistryKeyValue::Dword(_) => {
+                let val: u32 = subkey
+                    .get_value(&self.key)
+                    .map_err(anyhow::Error::from)?;
+                tracing::debug!("{:?} -> Read DWORD value '{}' = {}.", id, self.key, val);
+                Ok(RegistryKeyValue::Dword(val))
+            }
+        }
+    }
+}
+
+impl TweakMethod for RegistryTweak {
     /// Checks if the tweak is currently enabled.
     ///
     /// - If `default_value` is `Some(value)`, the tweak is enabled if the current registry value equals `value`.
@@ -48,7 +122,7 @@ impl RegistryTweak {
     /// - `Ok(true)` if the tweak is enabled.
     /// - `Ok(false)` if the tweak is disabled.
     /// - `Err(RegistryError)` if an error occurs while reading the registry.
-    pub fn is_registry_tweak_enabled(&self, id: TweakId) -> Result<bool, RegistryError> {
+    fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
         tracing::info!("{:?} -> Determining if registry tweak is enabled.", id);
         match self.read_current_value(id) {
             Ok(current_value) => {
@@ -72,9 +146,7 @@ impl RegistryTweak {
                     }
                 }
             }
-            Err(RegistryError::ReadValueError(ref msg))
-                if msg.contains("The system cannot find the file specified") =>
-            {
+            Err(_) => {
                 match &self.default_value {
                     Some(_) => {
                         // With a default value, absence means tweak is disabled
@@ -94,93 +166,6 @@ impl RegistryTweak {
                     }
                 }
             }
-            Err(e) => {
-                tracing::error!(
-                    error = ?e,
-                    "{:?} -> Failed to determine if registry tweak is enabled.",
-                    id
-                );
-                Err(e)
-            }
-        }
-    }
-
-    /// Reads the current value of the specified registry key.
-    ///
-    /// # Parameters
-    ///
-    /// - `id`: The unique identifier for the tweak.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(RegistryKeyValue)` with the current value.
-    /// - `Err(RegistryError)` if the operation fails.
-    pub fn read_current_value(&self, id: TweakId) -> Result<RegistryKeyValue, RegistryError> {
-        tracing::trace!("{:?} -> Reading current value of registry tweak.", id);
-
-        // Extract the hive from the key path (e.g., "HKEY_LOCAL_MACHINE")
-        let hive = self
-            .path
-            .split('\\')
-            .next()
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
-
-        // Map the hive string to the corresponding RegKey
-        let hkey = match hive {
-            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
-            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
-            other => {
-                tracing::error!(
-                    hive = %other,
-                    "Unsupported registry hive '{}'.",
-                    other
-                );
-                return Err(RegistryError::UnsupportedHive(other.to_string()));
-            }
-        };
-
-        // Extract the subkey path (everything after the hive)
-        let subkey_path = self
-            .path
-            .split_once('\\')
-            .map(|(_, path)| path)
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
-
-        // Attempt to open the subkey with read permissions
-        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_READ) {
-            Ok(key) => {
-                tracing::debug!(
-                    "{:?} -> Opened registry key '{}' for reading.",
-                    id,
-                    self.path
-                );
-                key
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = ?e,
-                    "{:?} -> Failed to open registry key '{}' for reading.",
-                    id, self.path
-                );
-                return Err(RegistryError::KeyOpenError(format!(
-                    "Failed to open registry key '{}' for reading: {}",
-                    self.path, e
-                )));
-            }
-        };
-
-        // Depending on the expected type, read the value
-        match &self.tweak_value {
-            RegistryKeyValue::Dword(_) => {
-                let val: u32 = subkey.get_value(&self.key).map_err(|e| {
-                    RegistryError::ReadValueError(format!(
-                        "Failed to read DWORD value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::debug!("{:?} -> Read DWORD value '{}' = {}.", id, self.key, val);
-                Ok(RegistryKeyValue::Dword(val))
-            }
         }
     }
 
@@ -194,7 +179,7 @@ impl RegistryTweak {
     ///
     /// - `Ok(())` if the operation succeeds.
     /// - `Err(RegistryError)` if the operation fails.
-    pub fn apply_registry_tweak(&self, id: TweakId) -> Result<(), RegistryError> {
+    fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
         tracing::info!("Applying registry tweak '{:?}'.", id);
 
         // Extract the hive from the key path
@@ -202,19 +187,18 @@ impl RegistryTweak {
             .path
             .split('\\')
             .next()
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"))?;
 
         // Map the hive string to the corresponding RegKey
         let hkey = match hive {
             "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
             "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
             other => {
-                tracing::error!(
-                    hive = %other,
-                    "{:?} -> Unsupported registry hive '{}'.", id,
+                tracing::error!("{:?} -> Unsupported registry hive '{}'.", id, other);
+                return Err(anyhow::Error::msg(format!(
+                    "Unsupported registry hive: {}",
                     other
-                );
-                return Err(RegistryError::UnsupportedHive(other.to_string()));
+                )));
             }
         };
 
@@ -223,7 +207,7 @@ impl RegistryTweak {
             .path
             .split_once('\\')
             .map(|(_, path)| path)
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
 
         // Attempt to open the subkey with read and write permissions
         // If it doesn't exist, attempt to create it
@@ -259,7 +243,7 @@ impl RegistryTweak {
                             error = ?e,
                             "{:?} -> Failed to create registry key '{}'.", id, self.path
                         );
-                        return Err(RegistryError::CreateError(format!(
+                        return Err(anyhow::Error::msg(format!(
                             "Failed to create registry key '{}': {}",
                             self.path, e
                         )));
@@ -272,7 +256,7 @@ impl RegistryTweak {
         match &self.tweak_value {
             RegistryKeyValue::Dword(val) => {
                 subkey.set_value(&self.key, val).map_err(|e| {
-                    RegistryError::SetValueError(format!(
+                    anyhow::Error::msg(format!(
                         "Failed to set DWORD value '{}' in key '{}': {}",
                         self.key, self.path, e
                     ))
@@ -293,8 +277,8 @@ impl RegistryTweak {
     /// # Returns
     ///
     /// - `Ok(())` if the operation succeeds.
-    /// - `Err(RegistryError)` if the operation fails.
-    pub fn revert_registry_tweak(&self, id: TweakId) -> Result<(), RegistryError> {
+    /// - `Err(anyhow::Error)` if the operation fails.
+    fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
         tracing::info!("{:?} -> Reverting registry tweak.", id);
 
         // Extract the hive from the key path
@@ -302,7 +286,7 @@ impl RegistryTweak {
             .path
             .split('\\')
             .next()
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"))?;
 
         // Map the hive string to the corresponding RegKey
         let hkey = match hive {
@@ -314,7 +298,10 @@ impl RegistryTweak {
                     "{:?} -> Unsupported registry hive '{}'.", id,
                     other
                 );
-                return Err(RegistryError::UnsupportedHive(other.to_string()));
+                return Err(anyhow::Error::msg(format!(
+                    "Unsupported registry hive: {}",
+                    other
+                )));
             }
         };
 
@@ -323,7 +310,7 @@ impl RegistryTweak {
             .path
             .split_once('\\')
             .map(|(_, path)| path)
-            .ok_or_else(|| RegistryError::InvalidKeyFormat(self.path.clone()))?;
+            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
 
         // Open the subkey with write permissions to modify the value
         let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_WRITE) {
@@ -336,9 +323,9 @@ impl RegistryTweak {
                     error = ?e,
                     "{:?} -> Failed to open registry key for writing.", id
                 );
-                return Err(RegistryError::KeyOpenError(format!(
-                    "Failed to open registry key '{}' for writing: {}",
-                    self.path, e
+                return Err(anyhow::Error::msg(format!(
+                    "Failed to open registry key for writing: {}",
+                    e
                 )));
             }
         };
@@ -349,7 +336,7 @@ impl RegistryTweak {
                 match default_val {
                     RegistryKeyValue::Dword(val) => {
                         subkey.set_value(&self.key, val).map_err(|e| {
-                            RegistryError::SetValueError(format!(
+                            anyhow::Error::msg(format!(
                                 "Failed to set DWORD value '{}' in key '{}': {}",
                                 self.key, self.path, e
                             ))
@@ -395,9 +382,9 @@ impl RegistryTweak {
                                 id,
                                 self.key
                             );
-                            return Err(RegistryError::DeleteValueError(format!(
-                                "Failed to delete registry value '{}' in key '{}': {}",
-                                self.key, self.path, e
+                            return Err(anyhow::Error::msg(format!(
+                                "Failed to delete registry value '{}': {}",
+                                self.key, e
                             )));
                         }
                     }
@@ -410,17 +397,13 @@ impl RegistryTweak {
 }
 
 pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::LargeSystemCache,
         "Large System Cache".to_string(),
         "Optimizes system memory management by adjusting the LargeSystemCache setting."
             .to_string(),
             TweakCategory::Memory,
-            vec![
-                "https://archive.arstechnica.com/tweak/nt/cache.html"
-                    .to_string(),
-            ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
                 .to_string(),
             key: "LargeSystemCache".to_string(),
@@ -428,24 +411,19 @@ pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
             tweak_value: RegistryKeyValue::Dword(1),
             // Windows will favor foreground applications in terms of memory allocation.
             default_value: Some(RegistryKeyValue::Dword(0)),
-        }),
+        },
         true,
-        TweakWidget::Switch,
     )
 }
 
 pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::SystemResponsiveness,
         "System Responsiveness".to_string(),
         "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
             .to_string(),
             TweakCategory::System,
-            vec![
-                "https://www.back2gaming.com/guides/how-to-tweak-windows-10-for-gaming/"
-                    .to_string(),
-            ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile"
                 .to_string(),
             key: "SystemResponsiveness".to_string(),
@@ -453,127 +431,109 @@ pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
             tweak_value: RegistryKeyValue::Dword(0),
             // Windows will favor background services in terms of resource allocation.
             default_value: Some(RegistryKeyValue::Dword(20)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableHWAcceleration,
         "Disable Hardware Acceleration".to_string(),
         "Disables hardware acceleration for the current user.".to_string(),
         TweakCategory::Graphics,
-        vec!["https://www.majorgeeks.com/content/page/how_to_disable_or_adjust_hardware_acceleration_in_windows.html#:~:text=Press%20the%20Windows%20Key%20%2B%20S,GPU%20scheduling%20on%20or%20off.".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
             key: "DisableHWAcceleration".to_string(),
             // Hardware acceleration is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Hardware acceleration is enabled.
             default_value: Some(RegistryKeyValue::Dword(0)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::Win32PrioritySeparation,
         "Win32PrioritySeparation".to_string(),
         "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
             .to_string(),
         TweakCategory::System,
-        vec![
-            "https://docs.google.com/document/d/1c2-lUJq74wuYK1WrA_bIvgb89dUN0sj8-hO3vqmrau4/edit"
-                .to_string(),
-        ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl".to_string(),
             key: "Win32PrioritySeparation".to_string(),
             // Foreground applications will receive priority over background services.
             tweak_value: RegistryKeyValue::Dword(26),
             // Background services will receive priority over foreground applications.
             default_value: Some(RegistryKeyValue::Dword(2)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableCoreParking,
         "Disable Core Parking".to_string(),
         "Disables core parking to improve system performance.".to_string(),
         TweakCategory::Power,
-        vec!["https://www.overclock.net/threads/core-parking-in-windows-disable-for-more-performance.1544554/".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
             key: "ValueMax".to_string(),
             // Core parking is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Core parking is enabled.
             default_value: Some(RegistryKeyValue::Dword(64)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_low_disk_space_checks() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::NoLowDiskSpaceChecks,
         "Disable Low Disk Space Checks".to_string(),
         "Disables low disk space checks to prevent notifications.".to_string(),
         TweakCategory::Storage,
-        vec!["https://www.howtogeek.com/349523/how-to-disable-the-low-disk-space-warning-on-windows/".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
             key: "NoLowDiskSpaceChecks".to_string(),
             // Low disk space checks are disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Low disk space checks are enabled.
             default_value: Some(RegistryKeyValue::Dword(0)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_ntfs_tunnelling() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableNtfsTunnelling,
         "Disable NTFS Tunnelling".to_string(),
         "Disables NTFS tunnelling to improve file system performance.".to_string(),
         TweakCategory::Storage,
-        vec!["https://tweaks.com/windows/37011/optimise-ntfs/".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
             key: "MaximumTunnelEntries".to_string(),
             // NTFS tunnelling is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // NTFS tunnelling is enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DistributeTimers,
         "Distribute Timers".to_string(),
         "Enables timer distribution across all cores.".to_string(),
         TweakCategory::System,
-        vec![
-            "https://sites.google.com/view/melodystweaks/misconceptions-about-timers-hpet-tsc-pmt"
-                .to_string(),
-        ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel"
                 .to_string(),
             key: "DistributeTimers".to_string(),
@@ -581,194 +541,205 @@ pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
             tweak_value: RegistryKeyValue::Dword(1),
             // Timer distribution is disabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_windows_error_reporting() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableWindowsErrorReporting,
         "Disable Windows Error Reporting".to_string(),
         "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.".to_string(),
         TweakCategory::Telemetry,
-        vec!["https://www.makeuseof.com/windows-disable-error-reporting/".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting".to_string(),
             key: "Disabled".to_string(),
             // Windows Error Reporting is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Windows Error Reporting is enabled.
             default_value: Some(RegistryKeyValue::Dword(0)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn dont_verify_random_drivers() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DontVerifyRandomDrivers,
         "Don't Verify Random Drivers".to_string(),
         "Disables random driver verification to improve system performance.".to_string(),
         TweakCategory::System,
-        vec![
-            "https://maxcheaters.com/topic/127491-counter-strike-improve-computer-performance/"
-                .to_string(),
-        ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
             key: "DontVerifyRandomDrivers".to_string(),
             // Random driver verification is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Random driver verification is enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_driver_paging() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableDriverPaging,
         "Disable Driver Paging".to_string(),
         "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
         TweakCategory::Memory,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
             key: "DisablePagingExecutive".to_string(),
             // Driver paging is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Driver paging is enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 // HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters create dword EnablePrefetcher=0
 
 pub fn disable_prefetcher() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisablePrefetcher,
         "Disable Prefetcher".to_string(),
         "Disables the Prefetcher service to improve system performance.".to_string(),
         TweakCategory::Memory,
-        vec!["https://www.tenforums.com/tutorials/82016-enable-disable-prefetch-windows-10-a.html".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters".to_string(),
             key: "EnablePrefetcher".to_string(),
             // Prefetcher is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Prefetcher is enabled.
             default_value: Some(RegistryKeyValue::Dword(3)),
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_application_telemetry() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableApplicationTelemetry,
         "Disable Application Telemetry".to_string(),
         "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
         TweakCategory::Telemetry,
-        vec!["https://sites.google.com/view/melodystweaks/basictweaks".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat".to_string(),
             key: "AITEnable".to_string(),
             // Application telemetry is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Application telemetry is enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn thread_dpc_disable() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::ThreadDpcDisable,
         "Thread DPC Disable".to_string(),
         "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
         TweakCategory::Kernel,
-        vec!["https://www.youtube.com/watch?v=4OrEytGFdK4".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
             key: "ThreadDpcEnable".to_string(),
             // Thread DPCs are disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Thread DPCs are enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn svc_host_split_threshold() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::SvcHostSplitThreshold,
-        "SvcHost Split Threshold in KB".to_string(),
+        "Disable SvcHost Split".to_string(),
         "Adjusts the SvcHost Split Threshold in KB to optimize system performance.".to_string(),
         TweakCategory::System,
-        vec!["https://www.techpowerup.com/forums/threads/maddoggs-fast-gaming-pc-registry-tweaks.308591/".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control".to_string(),
             key: "SvcHostSplitThresholdInKB".to_string(),
             tweak_value: RegistryKeyValue::Dword(0x0f000000),
             default_value: None,
-        }),
-        false,
-        TweakWidget::Switch,
+        },
+        true,
     )
 }
 
 pub fn disable_windows_defender() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisableWindowsDefender,
         "Disable Windows Defender".to_string(),
         "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.".to_string(),
         TweakCategory::Security,
-        vec!["https://www.windowscentral.com/how-permanently-disable-windows-defender-windows-10".to_string()],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender".to_string(),
             key: "DisableAntiSpyware".to_string(),
             // Windows Defender is disabled.
             tweak_value: RegistryKeyValue::Dword(1),
             // Windows Defender is enabled.
             default_value: None,
-        }),
+        },
         false,
-        TweakWidget::Switch,
     )
 }
 
 pub fn disable_page_file_encryption() -> Arc<Mutex<Tweak>> {
-    Tweak::new(
+    Tweak::registry_tweak(
         TweakId::DisablePageFileEncryption,
         "Disable Page File Encryption".to_string(),
         "Disables page file encryption to improve system performance.".to_string(),
         TweakCategory::Memory,
-        vec![
-            "https://www.tenforums.com/tutorials/82016-enable-disable-prefetch-windows-10-a.html"
-                .to_string(),
-        ],
-        TweakMethod::Registry(RegistryTweak {
+        RegistryTweak {
             path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
             key: "NtfsEncryptPagingFile".to_string(),
             // Page file encryption is disabled.
             tweak_value: RegistryKeyValue::Dword(0),
             // Page file encryption is enabled.
             default_value: Some(RegistryKeyValue::Dword(1)),
-        }),
+        },
         true,
-        TweakWidget::Switch,
+    )
+}
+
+pub fn disable_intel_tsx() -> Arc<Mutex<Tweak>> {
+    Tweak::registry_tweak(
+        TweakId::DisableIntelTSX,
+        "Disable Intel TSX".to_string(),
+        "Disables Intel Transactional Synchronization Extensions (TSX) operations to mitigate potential security vulnerabilities.".to_string(),
+        TweakCategory::Security,
+        RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Kernel".to_string(),
+            key: "DisableTsx".to_string(),
+            // Intel TSX operations are disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Intel TSX operations are enabled.
+            default_value: None,
+        },
+        true,
+    )
+}
+
+pub fn disable_windows_maintenance() -> Arc<Mutex<Tweak>> {
+    Tweak::registry_tweak(
+        TweakId::DisableWindowsMaintenance,
+        "Disable Windows Maintenance".to_string(),
+        "Disables Windows Maintenance by setting the `MaintenanceDisabled` registry value to `1`. This prevents Windows from performing maintenance tasks, such as software updates, system diagnostics, and security scans.".to_string(),
+        TweakCategory::Action,
+        RegistryTweak {
+            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance".to_string(),
+            key: "MaintenanceDisabled".to_string(),
+            // Windows Maintenance is disabled.
+            tweak_value: RegistryKeyValue::Dword(1),
+            // Windows Maintenance is enabled.
+            default_value: None,
+        },
+        false,
     )
 }

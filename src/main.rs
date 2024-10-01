@@ -1,29 +1,51 @@
 // src/main.rs
 
-mod errors;
 mod tweaks;
 mod utils;
 mod widgets;
 mod worker;
 
-use std::sync::{atomic, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 
 use eframe::{egui, App, Frame, NativeOptions};
+use egui::Sense;
 use tinyfiledialogs::YesNo;
-use tracing::{debug, error, info, span, trace, warn, Level};
-use tweaks::{initialize_all_tweaks, Tweak, TweakStatus};
+use tracing::{error, info, span, trace, warn, Level};
+use tweaks::{tweak_list, Tweak, TweakCategory, TweakStatus};
 use utils::{is_elevated, reboot_system};
-use widgets::{switch::toggle_switch, TweakWidget};
+use widgets::{
+    button::{action_button, ButtonState},
+    switch::toggle_switch,
+    TweakWidget,
+};
 
-use crate::worker::{TweakWorker, WorkerMessage, WorkerResult};
+use crate::worker::{Task, WorkerPool, WorkerResult};
+
+// Constants for layout and spacing
+const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
+const WINDOW_HEIGHT: f32 = 1000.0;
+
+// Controls the dimensions of each tweak container.
+const TWEAK_CONTAINER_HEIGHT: f32 = 30.0;
+const TWEAK_CONTAINER_WIDTH: f32 = 280.0;
+
+/// Controls the padding for tweak containers.
+const CONTAINER_VERTICAL_PADDING: f32 = 5.0;
+const CONTAINER_INTERNAL_PADDING: f32 = 4.0;
+
+// Horizontal spacing between grid columns
+const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
+
+// Status Bar Padding
+const STATUS_BAR_PADDING: f32 = 10.0; // Padding inside the status bar
 
 struct MyApp {
     tweaks: Vec<Arc<Mutex<Tweak>>>,
-    executor: TweakWorker,
+    worker_pool: WorkerPool,
 }
 
 impl MyApp {
-    /// Initializes the application by setting up tweaks and the worker.
+    /// Initializes the application by setting up tweaks and the worker pool.
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Initialize tracing spans for better context
         let app_span = span!(Level::INFO, "App Initialization");
@@ -33,52 +55,49 @@ impl MyApp {
 
         // Initialize tweaks
         info!("Initializing tweaks...");
-        let tweaks = initialize_all_tweaks();
+        let tweaks = tweak_list();
 
-        // Initialize tweak executor
-        info!("Initializing tweak executor...");
-        let executor = TweakWorker::new();
+        // Initialize worker pool
+        info!("Initializing {} workers...", num_cpus::get());
+        let worker_pool = WorkerPool::new(num_cpus::get());
 
         // Initialize the current state of all tweaks
         info!("Checking initial state of all tweaks");
-        for arc_tweak in &tweaks {
-            let mut tweak = arc_tweak.lock().unwrap();
-            match tweak.check_initial_state() {
-                Ok(enabled) => {
-                    info!(
-                        "{:?} -> Initial state: {}",
-                        tweak.id,
-                        if enabled { "enabled" } else { "disabled" }
-                    );
-                    tweak
-                        .enabled
-                        .store(enabled, std::sync::atomic::Ordering::SeqCst);
-                    tweak.status = TweakStatus::Idle;
-                }
-                Err(e) => {
-                    warn!("{:?} -> Initialization error: {}", tweak.id, e);
-                    tweak.status = TweakStatus::Failed(format!("Initialization error: {}", e));
-                }
-            }
+
+        // Iterate over all tweaks by reference to avoid moving
+        for tweak in &tweaks {
+            worker_pool
+                .send_task(Task::ReadInitialState {
+                    tweak: tweak.clone(),
+                })
+                .expect("Failed to send ReadInitialState task to worker pool");
         }
-        info!("Application initialization complete");
-        Self { tweaks, executor }
+
+        Self {
+            tweaks,
+            worker_pool,
+        }
     }
 
-    /// Processes any incoming results from the worker and updates tweak statuses.
+    fn count_tweaks_pending_reboot(&self) -> usize {
+        self.tweaks
+            .iter()
+            .filter(|tweak| *tweak.lock().unwrap().pending_reboot.lock().unwrap())
+            .count()
+    }
+
+    /// Processes any incoming results from the workers and updates tweak statuses.
     fn process_worker_results(&mut self) {
-        while let Ok(result) = self.executor.receiver.try_recv() {
+        while let Some(result) = self.worker_pool.try_recv_result() {
             match result {
                 WorkerResult::TweakApplied { id, success, error } => {
                     if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
-                        let mut tweak_guard = tweak.lock().unwrap();
+                        let tweak_guard = tweak.lock().unwrap();
                         if success {
-                            tweak_guard.status = TweakStatus::Idle;
+                            tweak_guard.set_status(TweakStatus::Idle);
 
                             if tweak_guard.requires_reboot {
-                                tweak_guard
-                                    .pending_reboot
-                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                tweak_guard.pending_reboot();
                                 info!(
                                     "{:?} -> Tweak applied successfully. Pending reboot.",
                                     tweak_guard.id
@@ -90,9 +109,9 @@ impl MyApp {
                                 );
                             }
                         } else {
-                            tweak_guard.status = TweakStatus::Failed(
+                            tweak_guard.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
-                            );
+                            ));
                             warn!(
                                 "{:?} -> Tweak application failed: {:?}",
                                 tweak_guard.id, tweak_guard.status
@@ -104,14 +123,12 @@ impl MyApp {
                 }
                 WorkerResult::TweakReverted { id, success, error } => {
                     if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
-                        let mut tweak_guard = tweak.lock().unwrap();
+                        let tweak_guard = tweak.lock().unwrap();
                         if success {
-                            tweak_guard.status = TweakStatus::Idle;
+                            tweak_guard.set_status(TweakStatus::Idle);
 
                             if tweak_guard.requires_reboot {
-                                tweak_guard
-                                    .pending_reboot
-                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                tweak_guard.cancel_pending_reboot();
                                 info!(
                                     "{:?} -> Tweak reverted successfully. Pending reboot cleared.",
                                     tweak_guard.id
@@ -123,9 +140,9 @@ impl MyApp {
                                 );
                             }
                         } else {
-                            tweak_guard.status = TweakStatus::Failed(
+                            tweak_guard.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
-                            );
+                            ));
                             warn!(
                                 "{:?} -> Tweak reversion failed: {:?}",
                                 tweak_guard.id, tweak_guard.status
@@ -135,6 +152,32 @@ impl MyApp {
                         warn!("Received result for unknown tweak: {:?}", id);
                     }
                 }
+                WorkerResult::InitialStateRead { id, success, error } => {
+                    if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
+                        let tweak_guard = tweak.lock().unwrap();
+                        if success {
+                            tweak_guard.set_status(TweakStatus::Idle);
+                            info!(
+                                "{:?} -> Initial state read successfully. Enabled: {}",
+                                tweak_guard.id,
+                                *tweak_guard.enabled.lock().unwrap()
+                            );
+                        } else {
+                            tweak_guard.set_status(TweakStatus::Failed(
+                                error.unwrap_or_else(|| "Unknown error".to_string()),
+                            ));
+                            warn!(
+                                "{:?} -> Failed to read initial state: {:?}",
+                                tweak_guard.id, tweak_guard.status
+                            );
+                        }
+                    } else {
+                        warn!(
+                            "Received InitialStateRead result for unknown tweak: {:?}",
+                            id
+                        );
+                    }
+                }
                 WorkerResult::ShutdownComplete => {
                     info!("Worker has shut down gracefully.");
                 }
@@ -142,227 +185,181 @@ impl MyApp {
         }
     }
 
-    /// Renders the entire UI by iterating over all tweaks.
-    fn draw_ui(&self, ui: &mut egui::Ui) {
-        // Categorize tweaks
-        let mut toggle_tweaks_requires_reboot = Vec::new();
-        let mut toggle_tweaks_no_reboot = Vec::new();
-        let mut apply_once_tweaks_requires_reboot = Vec::new();
-        let mut apply_once_tweaks_no_reboot = Vec::new();
-
-        for tweak in &self.tweaks {
-            let tweak_guard = tweak.lock().unwrap();
-            match tweak_guard.widget {
-                TweakWidget::Switch => {
-                    if tweak_guard.requires_reboot {
-                        toggle_tweaks_requires_reboot.push(tweak.clone());
-                    } else {
-                        toggle_tweaks_no_reboot.push(tweak.clone());
-                    }
-                }
-                TweakWidget::Button => {
-                    if tweak_guard.requires_reboot {
-                        apply_once_tweaks_requires_reboot.push(tweak.clone());
-                    } else {
-                        apply_once_tweaks_no_reboot.push(tweak.clone());
-                    }
-                }
+    /// Dispatches a task to apply or revert a tweak based on user interaction.
+    fn dispatch_task(&self, tweak: &Arc<Mutex<Tweak>>, apply: bool) {
+        let task = if apply {
+            Task::ApplyTweak {
+                tweak: tweak.clone(),
             }
+        } else {
+            Task::RevertTweak {
+                tweak: tweak.clone(),
+            }
+        };
+
+        if let Err(e) = self.worker_pool.send_task(task) {
+            error!("Failed to send task to worker pool: {}", e);
         }
+    }
 
-        // Render Apply-Once Tweaks that require reboot
-        if !apply_once_tweaks_requires_reboot.is_empty() {
-            ui.separator();
-            egui::Grid::new("apply_once_requires_reboot_grid")
-                .spacing(egui::vec2(20.0, 10.0))
-                .striped(true)
-                .show(ui, |ui| {
-                    for tweak in &apply_once_tweaks_requires_reboot {
-                        let tweak_guard = tweak.lock().unwrap();
+    fn draw_ui(&self, ui: &mut egui::Ui) {
+        // Group Tweaks by Category
 
-                        // Tweak Name
-                        ui.label(&tweak_guard.name);
-
-                        // Apply Button
-                        let button = egui::Button::new("Apply");
-                        let response =
-                            ui.add_enabled(tweak_guard.status != TweakStatus::Applying, button);
-
-                        if response.clicked() && tweak_guard.status == TweakStatus::Idle {
-                            if let Err(e) = self.executor.sender.send(WorkerMessage::ApplyTweak {
-                                tweak: tweak.clone(),
-                            }) {
-                                error!("Failed to send ApplyTweak message: {:?}", e);
-                            }
-                        }
-
-                        // Display "Applying..." status
-                        if tweak_guard.status == TweakStatus::Applying {
-                            ui.label("Applying...");
-                        }
-
-                        // Display error messages
-                        if let TweakStatus::Failed(ref err) = tweak_guard.status {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {:?}", err));
-                        }
-
-                        ui.end_row();
+        // Create a two-column grid with custom spacing
+        egui::Grid::new("main_columns_grid")
+            .num_columns(2)
+            .spacing(egui::vec2(GRID_HORIZONTAL_SPACING, 0.0))
+            .striped(true)
+            .show(ui, |ui| {
+                // **First Column**
+                ui.vertical(|ui| {
+                    for category in TweakCategory::left() {
+                        self.draw_category_section(ui, category);
                     }
                 });
+
+                // **Second Column**
+                ui.vertical(|ui| {
+                    for category in TweakCategory::right() {
+                        self.draw_category_section(ui, category);
+                    }
+                });
+            });
+    }
+
+    /// Helper method to draw a single category section
+    fn draw_category_section(&self, ui: &mut egui::Ui, category: TweakCategory) {
+        // Filter tweaks belonging to the current category
+        let category_tweaks: Vec<Arc<Mutex<Tweak>>> = self
+            .tweaks
+            .iter()
+            .filter(|tweak| {
+                let tweak_guard = tweak.lock().unwrap();
+                tweak_guard.category == category
+            })
+            .cloned()
+            .collect();
+
+        if category_tweaks.is_empty() {
+            return;
         }
 
-        // Render Apply-Once Tweaks that do not require reboot
-        if !apply_once_tweaks_no_reboot.is_empty() {
-            ui.separator();
-            egui::Grid::new("apply_once_no_reboot_grid")
-                .spacing(egui::vec2(20.0, 10.0))
-                .striped(true)
-                .show(ui, |ui| {
-                    for tweak in &apply_once_tweaks_no_reboot {
-                        let tweak_guard = tweak.lock().unwrap();
+        // Render Category Header
+        ui.heading(format!("{:?} Tweaks", category));
+        ui.separator();
+        ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
 
-                        // Tweak Name with tooltip
+        // Iterate over each tweak and draw using the tweak container
+        for tweak in &category_tweaks {
+            self.draw_tweak_container(ui, tweak.clone());
+            ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
+        }
+
+        ui.add_space(CONTAINER_VERTICAL_PADDING * 2.0); // Add some vertical spacing between categories
+    }
+
+    fn draw_tweak_container(&self, ui: &mut egui::Ui, tweak: Arc<Mutex<Tweak>>) {
+        // Define the desired size for the tweak container
+        let desired_size = egui::vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
+
+        // Allocate a fixed-size rectangular area for the container
+        let (rect, _) = ui.allocate_exact_size(desired_size, Sense::hover());
+
+        // Create a child UI within the allocated rect
+        let mut child_ui = ui.child_ui(
+            rect,
+            *ui.layout(),
+            Some(egui::UiStackInfo::new(egui::UiKind::Frame)),
+        );
+
+        // Render the Frame within the child UI
+        egui::Frame::group(child_ui.style())
+            .fill(child_ui.visuals().faint_bg_color)
+            .rounding(5.0)
+            .inner_margin(egui::Margin::same(CONTAINER_INTERNAL_PADDING))
+            .show(&mut child_ui, |ui| {
+                // Use horizontal layout to align label left and widget right
+                ui.horizontal(|ui| {
+                    // **Label Section**
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let tweak_guard = tweak.lock().unwrap();
                         ui.label(
                             egui::RichText::new(&tweak_guard.name)
-                                .text_style(egui::TextStyle::Body),
+                                .text_style(egui::TextStyle::Body)
+                                .strong(),
                         )
-                        .on_hover_text(tweak_guard.description.clone());
+                        .on_hover_text(&tweak_guard.description);
+                    });
 
-                        // Apply Button
-                        let button = egui::Button::new("Apply");
-                        let response =
-                            ui.add_enabled(tweak_guard.status != TweakStatus::Applying, button);
-
-                        if response.clicked() && tweak_guard.status == TweakStatus::Idle {
-                            if let Err(e) = self.executor.sender.send(WorkerMessage::ApplyTweak {
-                                tweak: tweak.clone(),
-                            }) {
-                                error!("Failed to send ApplyTweak message: {:?}", e);
-                            }
-                        }
-
-                        // Display "Applying..." status
-                        if tweak_guard.status == TweakStatus::Applying {
-                            ui.label("Applying...");
-                        }
-
-                        // Display error messages
-                        if let TweakStatus::Failed(ref err) = tweak_guard.status {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {:?}", err));
-                        }
-
-                        ui.end_row();
-                    }
-                });
-        }
-
-        // Render Toggle Tweaks that require reboot
-        if !toggle_tweaks_requires_reboot.is_empty() {
-            ui.separator();
-            egui::Grid::new("toggle_requires_reboot_grid")
-                .spacing(egui::vec2(20.0, 10.0))
-                .striped(true)
-                .show(ui, |ui| {
-                    for tweak in &toggle_tweaks_requires_reboot {
+                    // **Widget Section**
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let tweak_guard = tweak.lock().unwrap();
+                        match tweak_guard.widget {
+                            TweakWidget::ToggleSwitch => {
+                                // Toggle Switch Widget
+                                let mut is_enabled = *tweak_guard.enabled.lock().unwrap();
+                                let response_toggle = ui.add(toggle_switch(&mut is_enabled));
 
-                        // Tweak Name with tooltip
-                        ui.label(
-                            egui::RichText::new(&tweak_guard.name)
-                                .text_style(egui::TextStyle::Body),
-                        )
-                        .on_hover_text(tweak_guard.description.clone());
+                                // Handle toggle interaction
+                                if response_toggle.changed() {
+                                    // Update the enabled state
+                                    {
+                                        let mut enabled_guard = tweak_guard.enabled.lock().unwrap();
+                                        *enabled_guard = is_enabled;
+                                    }
 
-                        // Toggle Switch bound to the tweak's enabled state
-                        let mut state = tweak_guard.enabled.load(atomic::Ordering::SeqCst);
-                        let response = ui.add(toggle_switch(&mut state));
-                        if response.changed() {
-                            tweak_guard.enabled.store(state, atomic::Ordering::SeqCst);
-                        }
-
-                        // If the toggle state changed, send a message to the worker
-                        if response.changed() {
-                            // Create and send the appropriate message based on the new state
-                            let message = if tweak_guard.enabled.load(atomic::Ordering::SeqCst) {
-                                WorkerMessage::ApplyTweak {
-                                    tweak: tweak.clone(),
+                                    // Dispatch the apply or revert task based on the new state
+                                    self.dispatch_task(&tweak, is_enabled);
                                 }
-                            } else {
-                                WorkerMessage::RevertTweak {
-                                    tweak: tweak.clone(),
+
+                                // Handle error messages
+                                if let TweakStatus::Failed(ref err) = tweak_guard.get_status() {
+                                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
                                 }
-                            };
-                            if let Err(e) = self.executor.sender.send(message) {
-                                error!("Failed to send tweak message: {:?}", e);
                             }
-                        }
+                            TweakWidget::ActionButton => {
+                                // Apply Button Widget
+                                let button_state = match tweak_guard.get_status() {
+                                    TweakStatus::Idle => ButtonState::Default,
+                                    TweakStatus::Applying => ButtonState::InProgress,
+                                    TweakStatus::Failed(_) => ButtonState::Default, // Reset to Default on failure
+                                };
 
-                        // Display error messages
-                        if let TweakStatus::Failed(ref err) = tweak_guard.status {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {:?}", err));
-                        }
+                                // Create a mutable reference to the button state
+                                let mut button_state_mut = button_state;
 
-                        ui.end_row();
-                    }
-                });
-        }
+                                // Add the ApplyButton widget
+                                let response_button = ui.add(action_button(&mut button_state_mut));
 
-        // Render Toggle Tweaks that do not require reboot
-        if !toggle_tweaks_no_reboot.is_empty() {
-            ui.separator();
-            egui::Grid::new("toggle_no_reboot_grid")
-                .spacing(egui::vec2(20.0, 10.0))
-                .striped(true)
-                .show(ui, |ui| {
-                    for tweak in &toggle_tweaks_no_reboot {
-                        let tweak_guard = tweak.lock().unwrap();
+                                // If the button was clicked and is not in progress
+                                if response_button.clicked()
+                                    && tweak_guard.get_status() != TweakStatus::Applying
+                                {
+                                    // Update the tweak's status to Applying
+                                    {
+                                        let mut status_guard = tweak_guard.status.lock().unwrap();
+                                        *status_guard = TweakStatus::Applying;
+                                    }
 
-                        // Tweak Name with tooltip
-                        ui.label(
-                            egui::RichText::new(&tweak_guard.name)
-                                .text_style(egui::TextStyle::Body),
-                        )
-                        .on_hover_text(tweak_guard.description.clone());
-
-                        // Toggle Switch
-                        let mut state = tweak_guard.enabled.load(atomic::Ordering::SeqCst);
-                        let response = ui.add(toggle_switch(&mut state));
-
-                        // If the toggle state changed, send a message to the worker
-                        if response.changed() {
-                            // Store the updated state back into AtomicBool
-                            tweak_guard.enabled.store(state, atomic::Ordering::SeqCst);
-
-                            // Create and send the appropriate message based on the new state
-                            let message = if state {
-                                WorkerMessage::ApplyTweak {
-                                    tweak: tweak.clone(),
+                                    // Dispatch the apply task
+                                    self.dispatch_task(&tweak, true);
                                 }
-                            } else {
-                                WorkerMessage::RevertTweak {
-                                    tweak: tweak.clone(),
+
+                                // Handle error messages
+                                if let TweakStatus::Failed(ref err) = tweak_guard.get_status() {
+                                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
                                 }
-                            };
-                            if let Err(e) = self.executor.sender.send(message) {
-                                error!("Failed to send tweak message: {:?}", e);
-                            }
+                            } // Handle other widget types here
                         }
-
-                        // Display error messages
-                        if let TweakStatus::Failed(ref err) = tweak_guard.status {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {:?}", err));
-                        }
-
-                        ui.end_row();
-                    }
+                    });
                 });
-        }
+            });
     }
 
     /// Renders the status bar at the bottom with divisions.
     fn draw_status_bar(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.add_space(10.0); // Add some vertical padding
+            ui.add_space(STATUS_BAR_PADDING); // Apply the constant
 
             ui.horizontal(|ui| {
                 // First Division: General status
@@ -371,16 +368,9 @@ impl MyApp {
                 ui.separator(); // Vertical separator
 
                 // Second Division: Tweaks pending restart
-                let pending_reboot_count = self
-                    .tweaks
-                    .iter()
-                    .filter(|t| {
-                        t.lock()
-                            .unwrap()
-                            .pending_reboot
-                            .load(atomic::Ordering::SeqCst)
-                    })
-                    .count();
+
+                let pending_reboot_count = self.count_tweaks_pending_reboot();
+
                 ui.label(format!(
                     "{} tweak{} pending restart",
                     pending_reboot_count,
@@ -418,7 +408,7 @@ impl MyApp {
                 ui.label("Version: 1.0.0");
             });
 
-            ui.add_space(10.0); // Add some vertical padding
+            ui.add_space(STATUS_BAR_PADDING); // Apply the constant
         });
     }
 }
@@ -426,28 +416,30 @@ impl MyApp {
 impl App for MyApp {
     /// The main update loop where the UI is rendered and interactions are handled.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
-        // Process any incoming results from the worker
+        // Process any incoming results from the workers
         self.process_worker_results();
 
-        // Render the main UI
+        // Render the main UI with a vertical scrollbar
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_ui(ui);
+            // Start a vertical scroll area that takes all available space
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2]) // Prevent the scroll area from shrinking
+                .show(ui, |ui| {
+                    // Call your existing UI drawing function
+                    self.draw_ui(ui);
+                });
         });
 
         // Render the status bar
         self.draw_status_bar(ctx);
     }
 
-    /// Handles application exit by sending a shutdown message to the worker.
+    /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        info!("Application is exiting. Sending shutdown message to executor.");
-        // Send shutdown message to executor
-        if let Err(e) = self.executor.sender.send(WorkerMessage::Shutdown) {
-            error!("Failed to send Shutdown message: {:?}", e);
-        } else {
-            debug!("Shutdown message sent to executor.");
-        }
-        info!("Shutdown process complete.");
+        info!("Application is exiting. Sending shutdown messages to workers.");
+        // Send shutdown messages to all workers
+        self.worker_pool.shutdown(num_cpus::get());
+        info!("Shutdown messages sent to all workers.");
     }
 }
 
@@ -475,8 +467,8 @@ fn main() -> eframe::Result<()> {
 
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([450.0, 1000.0]) // Set a default initial size
-            .with_min_inner_size([400.0, 300.0]), // Set a minimum size
+            .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT]) // Adjusted size for better layout
+            .with_min_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT / 2.0]), // Set a minimum size
         ..Default::default()
     };
 
