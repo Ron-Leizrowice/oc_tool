@@ -5,10 +5,9 @@ pub mod powershell;
 pub mod registry;
 pub mod rust;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Error;
-use dashmap::DashMap;
 use group_policy::GroupPolicyTweak;
 use powershell::PowershellTweak;
 use registry::RegistryTweak;
@@ -16,7 +15,6 @@ use registry::RegistryTweak;
 use crate::widgets::TweakWidget;
 
 /// Represents a single tweak that can be applied to the system.
-#[derive(Clone)]
 pub struct Tweak {
     /// Display name of the tweak.
     pub name: String,
@@ -54,6 +52,7 @@ pub trait TweakMethod: Send + Sync {
 pub enum TweakStatus {
     Idle,
     Applying,
+    Reverting,
     Failed(String),
 }
 
@@ -99,7 +98,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
+            widget: TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -107,7 +106,7 @@ impl Tweak {
         }
     }
 
-    pub fn powershell(
+    pub fn powershell_tweak(
         name: String,
         description: String,
         category: TweakCategory,
@@ -115,8 +114,8 @@ impl Tweak {
         requires_reboot: bool,
     ) -> Self {
         let widget = match method.undo_script {
-            Some(_) => TweakWidget::ToggleSwitch,
-            None => TweakWidget::ActionButton,
+            Some(_) => TweakWidget::Toggle,
+            None => TweakWidget::Button,
         };
 
         Self {
@@ -132,7 +131,7 @@ impl Tweak {
         }
     }
 
-    pub fn group_policy(
+    pub fn group_policy_tweak(
         name: String,
         description: String,
         category: TweakCategory,
@@ -144,7 +143,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
+            widget: TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -152,11 +151,12 @@ impl Tweak {
         }
     }
 
-    pub fn rust<M: TweakMethod + 'static>(
+    pub fn rust_tweak<M: TweakMethod + 'static>(
         name: String,
         description: String,
         category: TweakCategory,
         method: M,
+        widget: TweakWidget,
         requires_reboot: bool,
     ) -> Self {
         Self {
@@ -164,7 +164,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
+            widget: widget,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -251,8 +251,10 @@ pub enum TweakId {
 }
 
 /// Initializes all tweaks with their respective configurations.
-pub fn all() -> DashMap<TweakId, Tweak> {
-    DashMap::from_iter(vec![
+pub fn all() -> HashMap<TweakId, Tweak> {
+    HashMap::from_iter(vec![
+        (TweakId::ProcessIdleTasks, rust::process_idle_tasks()),
+        (TweakId::LowResMode, rust::low_res_mode()),
         (
             TweakId::LargeSystemCache,
             registry::enable_large_system_cache(),
@@ -273,7 +275,6 @@ pub fn all() -> DashMap<TweakId, Tweak> {
             TweakId::DisableCoreParking,
             registry::disable_core_parking(),
         ),
-        (TweakId::ProcessIdleTasks, powershell::process_idle_tasks()),
         (
             TweakId::SeLockMemoryPrivilege,
             group_policy::se_lock_memory_privilege(),
@@ -373,6 +374,5 @@ pub fn all() -> DashMap<TweakId, Tweak> {
             TweakId::HighPerformanceVisualSettings,
             powershell::high_performance_visual_settings(),
         ),
-        (TweakId::LowResMode, rust::low_res_mode()),
     ])
 }

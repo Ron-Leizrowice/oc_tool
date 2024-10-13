@@ -5,14 +5,13 @@ mod utils;
 mod widgets;
 mod worker;
 
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use dashmap::DashMap;
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
-use tracing::{error, info, span, trace, warn, Level};
+use tracing::{error, info, span, trace, Level};
 use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
@@ -20,8 +19,7 @@ use widgets::{
     switch::toggle_switch,
     TweakWidget,
 };
-
-use crate::worker::{WorkerPool, WorkerResult, WorkerTask};
+use worker::{TaskOrchestrator, TweakAction, TweakTask};
 
 // Constants for layout and spacing
 const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
@@ -47,142 +45,110 @@ const BUTTON_HEIGHT: f32 = 20.0;
 
 const BUTTON_DIMENSIONS: Vec2 = vec2(BUTTON_WIDTH, BUTTON_HEIGHT);
 
-const NUM_WORKERS: usize = 8;
-
 /// Represents your application's main structure.
 pub struct MyApp {
-    pub tweaks: Arc<DashMap<TweakId, Tweak>>,
-    pub worker_pool: WorkerPool,
+    pub tweaks: HashMap<TweakId, Tweak>,
+    pub orchestrator: TaskOrchestrator,
 
     // Power management fields
     pub power_state: PowerState,
     pub slow_mode: bool,
+
+    // State tracking for initial state reads
+    pub initial_states_loaded: bool,
+    pub pending_initial_state_reads: usize,
 }
 
 impl MyApp {
-    /// Initializes the application by setting up tweaks and the worker pool.
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Initialize tracing spans for better context
         let app_span = span!(Level::INFO, "App Initialization");
         let _app_guard = app_span.enter();
 
         // Initialize tweaks
-        let tweaks = Arc::new(tweaks::all());
+        let mut tweaks = tweaks::all();
 
-        // Initialize worker pool
-        let worker_pool = WorkerPool::new(NUM_WORKERS, Arc::clone(&tweaks));
+        // Initialize the task orchestrator with the specified number of workers
+        let orchestrator = TaskOrchestrator::new();
 
         // Initialize the current state of all tweaks
-        for tweak_id in tweaks.iter().map(|entry| *entry.key()) {
-            worker_pool
-                .send_task(WorkerTask::ReadInitialState { id: tweak_id })
-                .expect("Failed to send ReadInitialState task to worker pool");
+        for (id, tweak) in tweaks.iter_mut() {
+            // Set initial status to Idle
+            tweak.set_status(TweakStatus::Idle);
+            // Submit a task to read the initial state
+            let task = TweakTask {
+                id: *id,
+                method: tweak.method.clone(),
+                action: TweakAction::ReadInitialState,
+            };
+            if let Err(e) = orchestrator.submit_task(task) {
+                error!(
+                    "Failed to submit initial state task for tweak {:?}: {:?}",
+                    id, e
+                );
+            }
         }
+
+        // Initialize the pending reads to the number of tweaks
+        let pending_initial_state_reads = tweaks.len();
 
         Self {
             tweaks,
-            worker_pool,
+            orchestrator,
             power_state: read_power_state().unwrap(),
             slow_mode: false,
+            initial_states_loaded: false,
+            pending_initial_state_reads,
         }
     }
 
     fn count_tweaks_pending_reboot(&self) -> usize {
         self.tweaks
             .iter()
-            .filter(|tweak| tweak.value().pending_reboot)
+            .filter(|(_, tweak)| tweak.pending_reboot)
             .count()
     }
 
-    /// Processes any incoming results from the workers and updates tweak statuses.
-    fn process_worker_results(&mut self) {
-        while let Some(result) = self.worker_pool.try_recv_result() {
-            match result {
-                WorkerResult::TweakApplied { id, success, error } => {
-                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
-                        if success {
+    /// Poll the orchestrator to check for any completed tasks.
+    fn update_tweak_states(&mut self) {
+        while let Some(result) = self.orchestrator.try_recv_result() {
+            if let Some(tweak) = self.tweaks.get_mut(&result.id) {
+                if result.success {
+                    match tweak.get_status() {
+                        TweakStatus::Applying => {
+                            // Set status to Idle after applying
                             tweak.set_status(TweakStatus::Idle);
-
-                            if tweak.requires_reboot {
-                                tweak.set_pending_reboot(true);
-                                info!("{id:?} -> Tweak applied successfully. Pending reboot.");
-                            } else {
-                                info!("{id:?} -> Tweak applied successfully. No reboot required.");
+                        }
+                        TweakStatus::Idle => {
+                            // For initial state read, set enabled state
+                            if let Some(enabled) = result.enabled_state {
+                                tweak.set_enabled(enabled);
                             }
-                        } else {
-                            tweak.set_status(TweakStatus::Failed(
-                                error.unwrap_or_else(|| "Unknown error".to_string()),
-                            ));
-                            warn!("{id:?} -> Tweak apply failed: {:?}", tweak.get_status());
                         }
-                    } else {
-                        warn!("Received result for unknown tweak: {id:?}");
+                        _ => {}
                     }
+                } else {
+                    // Handle error
+                    tweak.set_status(TweakStatus::Failed(
+                        result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                    ));
                 }
-                WorkerResult::TweakReverted { id, success, error } => {
-                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
-                        if success {
-                            tweak.set_status(TweakStatus::Idle);
+            }
 
-                            if tweak.requires_reboot {
-                                tweak.set_pending_reboot(false);
-                                info!(
-                                    "{id:?} -> Tweak reverted successfully. Pending reboot cleared.",
-                                );
-                            } else {
-                                info!("{id:?} -> Tweak reverted successfully. No reboot required.");
-                            }
-                        } else {
-                            tweak.set_status(TweakStatus::Failed(
-                                error.unwrap_or_else(|| "Unknown error".to_string()),
-                            ));
-                            warn!("{id:?} -> Tweak reversion failed: {:?}", tweak.get_status());
-                        }
-                    } else {
-                        warn!("Received result for unknown tweak: {id:?}");
-                    }
-                }
-                WorkerResult::InitialStateRead { id, success, error } => {
-                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
-                        if success {
-                            tweak.set_status(TweakStatus::Idle);
-                            info!(
-                                "{id:?} -> Initial state read successfully. Setting tweak to Idle."
-                            );
-                        } else {
-                            tweak.set_status(TweakStatus::Failed(
-                                error.unwrap_or_else(|| "Unknown error".to_string()),
-                            ));
-                            warn!(
-                                "{id:?} -> Failed to read initial state: {:?}",
-                                tweak.get_status()
-                            );
-                        }
-                    } else {
-                        warn!("Received InitialStateRead result for unknown tweak: {id:?}");
-                    }
-                }
-                WorkerResult::ShutdownComplete => {
-                    info!("Worker has shut down gracefully.");
+            // Decrement the counter if the action was ReadInitialState
+            if let TweakAction::ReadInitialState = result.action {
+                self.pending_initial_state_reads =
+                    self.pending_initial_state_reads.saturating_sub(1);
+
+                // If all initial states are read, set initial_states_loaded to true
+                if self.pending_initial_state_reads == 0 {
+                    self.initial_states_loaded = true;
                 }
             }
         }
     }
 
-    /// Dispatches a task to apply or revert a tweak based on user interaction.
-    fn dispatch_task(&self, id: TweakId, apply: bool) {
-        let task = if apply {
-            WorkerTask::ApplyTweak { id }
-        } else {
-            WorkerTask::RevertTweak { id }
-        };
-
-        if let Err(e) = self.worker_pool.send_task(task) {
-            error!("Failed to send task to worker pool: {}", e);
-        }
-    }
-
-    fn draw_ui(&self, ui: &mut egui::Ui) {
+    fn draw_ui(&mut self, ui: &mut egui::Ui) {
         // Create a two-column grid with custom spacing
         egui::Grid::new("main_columns_grid")
             .num_columns(2)
@@ -206,13 +172,13 @@ impl MyApp {
     }
 
     /// Helper method to draw a single category section
-    fn draw_category_section(&self, ui: &mut egui::Ui, category: TweakCategory) {
+    fn draw_category_section(&mut self, ui: &mut egui::Ui, category: TweakCategory) {
         // Filter tweaks belonging to the current category
         let category_tweaks: Vec<TweakId> = self
             .tweaks
             .iter()
             .filter_map(|tweak_entry| {
-                let (id, tweak) = tweak_entry.pair();
+                let (id, tweak) = tweak_entry;
                 if tweak.category == category {
                     Some(*id)
                 } else {
@@ -239,7 +205,7 @@ impl MyApp {
         ui.add_space(CONTAINER_VERTICAL_PADDING * 2.0); // Add some vertical spacing between categories
     }
 
-    fn draw_tweak_container(&self, ui: &mut egui::Ui, tweak_id: TweakId) {
+    fn draw_tweak_container(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
         // Define the desired size for the tweak container
         let desired_size = egui::vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
 
@@ -280,11 +246,10 @@ impl MyApp {
                             let tweak_status = tweak_entry.get_status();
                             let is_enabled = tweak_entry.is_enabled();
                             let widget_type = tweak_entry.widget.clone();
-                            // Release the lock
-                            drop(tweak_entry);
+
 
                             match widget_type {
-                                TweakWidget::ToggleSwitch => {
+                                TweakWidget::Toggle => {
                                     // Toggle Switch Widget
                                     let mut is_enabled_mut = is_enabled;
                                     let response_toggle =
@@ -293,14 +258,31 @@ impl MyApp {
                                     // Handle toggle interaction
                                     if response_toggle.changed() {
                                         // Acquire mutable reference to tweak to set status
-                                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
+                                        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
                                             // Update the tweak's enabled state
                                             tweak.set_enabled(is_enabled_mut);
                                             // Set the status to Applying
                                             tweak.set_status(TweakStatus::Applying);
                                         }
                                         // Dispatch the apply or revert task based on the new state
-                                        self.dispatch_task(tweak_id, is_enabled_mut);
+                                        let action = if is_enabled_mut {
+                                            TweakAction::Apply
+                                        } else {
+                                            TweakAction::Revert
+                                        };
+                                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
+                                            let task = TweakTask {
+                                                id: tweak_id,
+                                                method: tweak_entry.method.clone(),
+                                                action,
+                                            };
+                                            if let Err(e) = self.orchestrator.submit_task(task) {
+                                                error!(
+                                                    "Failed to submit task for tweak {:?}: {:?}",
+                                                    tweak_id, e
+                                                );
+                                            }
+                                        }
                                     }
 
                                     // Handle error messages
@@ -311,13 +293,14 @@ impl MyApp {
                                         );
                                     }
                                 }
-                                TweakWidget::ActionButton => {
+                                TweakWidget::Button => {
                                     // Determine button state based on tweak_status
                                     let button_state = match tweak_status {
                                         TweakStatus::Idle | TweakStatus::Failed(_) => {
                                             ButtonState::Default
                                         }
                                         TweakStatus::Applying => ButtonState::InProgress,
+                                        _ => ButtonState::Default,
                                     };
 
                                     // Create a mutable variable for the button state (since the widget expects &mut)
@@ -328,15 +311,22 @@ impl MyApp {
                                         ui.add(action_button(&mut button_state_mut));
 
                                     // Handle button click
-                                    if response_button.clicked()
-                                        && button_state == ButtonState::Default
-                                    {
+                                    if response_button.clicked() && button_state == ButtonState::Default {
                                         // Acquire mutable reference to the tweak to set status to Applying
-                                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
+                                        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
                                             tweak.set_status(TweakStatus::Applying);
                                         }
                                         // Dispatch the apply task
-                                        self.dispatch_task(tweak_id, true);
+                                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
+                                            let task = TweakTask {
+                                                id: tweak_id,
+                                                method: tweak_entry.method.clone(),
+                                                action: TweakAction::Apply,
+                                            };
+                                            if let Err(e) = self.orchestrator.submit_task(task) {
+                                                error!("Failed to submit apply task for tweak {:?}: {:?}", tweak_id, e);
+                                            }
+                                        }
                                     }
 
                                     // Handle error messages
@@ -354,13 +344,6 @@ impl MyApp {
             });
     }
 
-    /// Checks if any tweaks are currently in the Applying state.
-    fn any_tweaks_applying(&self) -> bool {
-        self.tweaks
-            .iter()
-            .any(|tweak_entry| matches!(tweak_entry.value().get_status(), TweakStatus::Applying))
-    }
-
     /// Renders the status bar at the bottom with divisions.
     fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
@@ -368,7 +351,7 @@ impl MyApp {
 
             ui.horizontal(|ui| {
                 // **Version Label**
-                ui.label(RichText::new("v1.0.1").font(FontId::proportional(16.0)));
+                ui.label(RichText::new("v0.1.0a").font(FontId::proportional(16.0)));
                 ui.separator(); // Vertical separator
 
                 // Tweaks pending restart
@@ -472,40 +455,56 @@ impl App for MyApp {
     /// The main update loop where the UI is rendered and interactions are handled.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         // Process any incoming results from the workers
-        self.process_worker_results();
+        self.update_tweak_states();
 
-        // Render the main UI with a vertical scrollbar
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Start a vertical scroll area that takes all available space
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2]) // Prevent the scroll area from shrinking
-                .show(ui, |ui| {
-                    // Call your existing UI drawing function
-                    self.draw_ui(ui);
+        if !self.initial_states_loaded {
+            // Display a loading screen
+            egui::CentralPanel::default().show(ctx, |ui| {
+                // In the loading screen UI
+                ui.vertical_centered(|ui| {
+                    ui.add_space(200.0);
+                    ui.heading("Reading system state...");
+                    ui.add(egui::widgets::Spinner::new());
                 });
-        });
+            });
+        } else {
+            // Render the main UI
+            egui::CentralPanel::default().show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        self.draw_ui(ui);
+                    });
+            });
 
-        // Render the status bar
-        self.draw_status_bar(ctx);
-
-        // **Request repaint if any tweaks are in the Applying state**
-        if self.any_tweaks_applying() {
-            // Request a repaint to ensure update() is called again
-            ctx.request_repaint();
+            // Render the status bar
+            self.draw_status_bar(ctx);
         }
     }
 
     /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // Disable low res mode
-        self.dispatch_task(TweakId::LowResMode, false);
+        let task = TweakTask {
+            id: TweakId::LowResMode,
+            method: self
+                .tweaks
+                .get(&TweakId::LowResMode)
+                .unwrap()
+                .method
+                .clone(),
+            action: TweakAction::Revert,
+        };
+        if let Err(e) = self.orchestrator.submit_task(task) {
+            error!("Failed to submit revert task for low-res mode: {:?}", e);
+        }
+
         // Disable slow mode
         if let Err(e) = self.disable_slow_mode() {
             error!("Failed to disable slow mode during exit: {:?}", e);
         }
 
         // Close the worker pool
-        self.worker_pool.shutdown();
+        self.orchestrator.shutdown();
     }
 }
 

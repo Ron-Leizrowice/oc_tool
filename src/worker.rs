@@ -1,371 +1,256 @@
 // src/worker.rs
 
-use std::{
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        Arc,
-    },
-    thread,
-};
+use std::{sync::Arc, thread, time::Duration};
 
-use dashmap::DashMap;
-use tracing::{error, info, warn};
+use crossbeam::channel;
+use tracing::{error, info};
 
-use crate::tweaks::{Tweak, TweakId, TweakStatus};
+use crate::tweaks::{TweakId, TweakMethod};
 
-/// Define worker messages and results
+const NUM_WORKERS: usize = 8;
+
+/// Commands that can be sent to a worker.
 #[derive(Clone)]
-pub enum WorkerTask {
-    ReadInitialState { id: TweakId },
-    ApplyTweak { id: TweakId },
-    RevertTweak { id: TweakId },
+pub enum WorkerCommand {
+    ApplyTweak {
+        id: TweakId,
+        method: Arc<dyn TweakMethod>,
+    },
+    RevertTweak {
+        id: TweakId,
+        method: Arc<dyn TweakMethod>,
+    },
+    ReadTweakState {
+        id: TweakId,
+        method: Arc<dyn TweakMethod>,
+    },
     Shutdown,
 }
 
-#[derive(Clone)]
-pub enum WorkerResult {
-    TweakApplied {
-        id: TweakId,
-        success: bool,
-        error: Option<String>,
-    },
-    TweakReverted {
-        id: TweakId,
-        success: bool,
-        error: Option<String>,
-    },
-    InitialStateRead {
-        id: TweakId,
-        success: bool,
-        error: Option<String>,
-    },
-    ShutdownComplete,
+/// Represents the result of a processed command.
+#[derive(Debug, Clone)]
+pub struct TweakResult {
+    pub id: TweakId,
+    pub success: bool,
+    pub error: Option<String>,
+    pub enabled_state: Option<bool>, // Some(true) if enabled, Some(false) if disabled, None if unknown
+    pub action: TweakAction,
 }
 
-/// Manages a pool of worker threads that process tasks concurrently.
-pub struct WorkerPool {
-    task_sender: Sender<WorkerTask>,
-    result_receiver: Receiver<WorkerResult>,
+/// Represents a worker thread that processes `TweakTask`s.
+pub struct Worker {
+    id: usize,
+    command_receiver: channel::Receiver<WorkerCommand>,
+    result_sender: channel::Sender<TweakResult>,
 }
 
-impl WorkerPool {
-    /// Creates a new `WorkerPool` and starts its event loop in a separate thread.
-    pub fn new(num_workers: usize, tweaks: Arc<DashMap<TweakId, Tweak>>) -> Self {
-        let (task_sender, task_receiver) = mpsc::channel::<WorkerTask>();
-        let (result_sender, result_receiver) = mpsc::channel::<WorkerResult>();
-
-        // Clone tweaks for use in the worker pool thread
-        let tweaks_clone = Arc::clone(&tweaks);
-
-        // Start the WorkerPool event loop in a new thread
-        thread::spawn(move || {
-            Self::run_worker_pool(num_workers, task_receiver, result_sender, tweaks_clone);
-        });
-
-        WorkerPool {
-            task_sender,
-            result_receiver,
+impl Worker {
+    pub fn new(
+        id: usize,
+        command_receiver: channel::Receiver<WorkerCommand>,
+        result_sender: channel::Sender<TweakResult>,
+    ) -> Self {
+        Self {
+            id,
+            command_receiver,
+            result_sender,
         }
     }
 
-    /// The event loop that runs in the WorkerPool thread.
-    fn run_worker_pool(
-        num_workers: usize,
-        task_receiver: Receiver<WorkerTask>,
-        result_sender: Sender<WorkerResult>,
-        tweaks: Arc<DashMap<TweakId, Tweak>>,
-    ) {
-        // Create channels for communicating with worker threads
-        let mut worker_task_senders = Vec::new();
-        let mut worker_result_receivers = Vec::new();
-
-        for worker_id in 0..num_workers {
-            let (worker_task_sender, worker_task_receiver) = mpsc::channel::<WorkerTask>();
-            let (worker_result_sender, worker_result_receiver) = mpsc::channel::<WorkerResult>();
-
-            let tweaks_clone = Arc::clone(&tweaks);
-
-            // Start worker threads
-            thread::spawn(move || {
-                worker_loop(
-                    worker_id,
-                    worker_task_receiver,
-                    worker_result_sender,
-                    tweaks_clone,
-                );
-            });
-
-            worker_task_senders.push(worker_task_sender);
-            worker_result_receivers.push(worker_result_receiver);
-        }
-
-        let mut next_worker = 0;
-
-        loop {
-            // Receive a task from the UI thread
-            match task_receiver.recv() {
-                Ok(task) => {
-                    // Check for shutdown
-                    if let WorkerTask::Shutdown = task {
-                        // Send shutdown to all workers
-                        for sender in &worker_task_senders {
-                            let _ = sender.send(WorkerTask::Shutdown);
+    pub fn run(self) -> thread::JoinHandle<()> {
+        let worker_id = self.id;
+        let command_receiver = self.command_receiver;
+        let result_sender = self.result_sender;
+        thread::spawn(move || {
+            info!("Worker {} started.", worker_id);
+            while let Ok(command) = command_receiver.recv() {
+                match command {
+                    WorkerCommand::ApplyTweak { id, method } => {
+                        info!("Worker {} applying tweak {:?}", worker_id, id);
+                        let result = match method.apply(id) {
+                            Ok(_) => TweakResult {
+                                id,
+                                success: true,
+                                error: None,
+                                enabled_state: Some(true),
+                                action: TweakAction::Apply,
+                            },
+                            Err(e) => TweakResult {
+                                id,
+                                success: false,
+                                error: Some(e.to_string()),
+                                enabled_state: None,
+                                action: TweakAction::Apply,
+                            },
+                        };
+                        if let Err(e) = result_sender.send(result) {
+                            error!("Worker {} failed to send result: {:?}", worker_id, e);
+                            break;
                         }
+                    }
+                    WorkerCommand::RevertTweak { id, method } => {
+                        info!("Worker {} reverting tweak {:?}", worker_id, id);
+                        let result = match method.revert(id) {
+                            Ok(_) => TweakResult {
+                                id,
+                                success: true,
+                                error: None,
+                                enabled_state: Some(false),
+                                action: TweakAction::Revert,
+                            },
+                            Err(e) => TweakResult {
+                                id,
+                                success: false,
+                                error: Some(e.to_string()),
+                                enabled_state: None,
+                                action: TweakAction::Revert,
+                            },
+                        };
+                        if let Err(e) = result_sender.send(result) {
+                            error!("Worker {} failed to send result: {:?}", worker_id, e);
+                            break;
+                        }
+                    }
+                    WorkerCommand::ReadTweakState { id, method } => {
+                        info!(
+                            "Worker {} reading initial state for tweak {:?}",
+                            worker_id, id
+                        );
+                        let result = match method.initial_state(id) {
+                            Ok(state) => TweakResult {
+                                id,
+                                success: true,
+                                error: None,
+                                enabled_state: Some(state),
+                                action: TweakAction::ReadInitialState,
+                            },
+                            Err(e) => TweakResult {
+                                id,
+                                success: false,
+                                error: Some(e.to_string()),
+                                enabled_state: None,
+                                action: TweakAction::ReadInitialState,
+                            },
+                        };
+                        if let Err(e) = result_sender.send(result) {
+                            error!("Worker {} failed to send result: {:?}", worker_id, e);
+                            break;
+                        }
+                    }
+                    WorkerCommand::Shutdown => {
+                        info!("Worker {} received shutdown command.", worker_id);
                         break;
                     }
-
-                    // Send the task to the next worker in a round-robin fashion
-                    if let Some(worker_sender) = worker_task_senders.get(next_worker) {
-                        if let Err(e) = worker_sender.send(task.clone()) {
-                            error!("Failed to send task to worker {}: {}", next_worker, e);
-                        }
-                        next_worker = (next_worker + 1) % num_workers;
-                    }
                 }
-                Err(e) => {
-                    error!("WorkerPool: task receiver disconnected: {}", e);
-                    break;
-                }
+                // Simulate processing time
+                thread::sleep(Duration::from_millis(100));
             }
+            info!("Worker {} shutting down.", worker_id);
+        })
+    }
+}
 
-            // Collect results from workers and send them to the UI thread
-            for receiver in &worker_result_receivers {
-                while let Ok(result) = receiver.try_recv() {
-                    if let Err(e) = result_sender.send(result) {
-                        error!("WorkerPool: failed to send result to UI thread: {}", e);
-                    }
-                }
-            }
+/// Represents a task to be processed by a worker.
+#[derive(Clone)]
+pub struct TweakTask {
+    pub id: TweakId,
+    pub method: Arc<dyn TweakMethod>,
+    pub action: TweakAction,
+}
+
+/// Actions that can be performed on a tweak.
+#[derive(Debug, Clone)]
+pub enum TweakAction {
+    Apply,
+    Revert,
+    ReadInitialState,
+}
+
+/// The orchestrator managing worker threads and task distribution.
+pub struct TaskOrchestrator {
+    command_sender: channel::Sender<WorkerCommand>,
+    result_receiver: channel::Receiver<TweakResult>,
+    workers: Vec<WorkerHandle>,
+}
+
+struct WorkerHandle {
+    handle: Option<thread::JoinHandle<()>>, // Wrap in Option to allow moving out
+}
+
+impl Default for TaskOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskOrchestrator {
+    /// Creates a new TaskOrchestrator with a specified number of workers.
+    pub fn new() -> Self {
+        let (command_sender, command_receiver) = channel::unbounded::<WorkerCommand>();
+        let (result_sender, result_receiver) = channel::unbounded::<TweakResult>();
+
+        let mut workers = Vec::with_capacity(NUM_WORKERS);
+
+        for i in 0..NUM_WORKERS {
+            let command_receiver_clone = command_receiver.clone();
+            let result_sender_clone = result_sender.clone();
+            let worker = Worker::new(i, command_receiver_clone, result_sender_clone);
+            let handle = worker.run();
+            workers.push(WorkerHandle {
+                handle: Some(handle),
+            });
         }
 
-        // Collect any remaining results from workers
-        for receiver in &worker_result_receivers {
-            while let Ok(result) = receiver.recv() {
-                if let Err(e) = result_sender.send(result) {
-                    error!("WorkerPool: failed to send result to UI thread: {}", e);
-                }
-            }
+        // Drop extra clones to allow workers to exit
+        drop(command_receiver);
+        drop(result_sender);
+
+        Self {
+            command_sender,
+            result_receiver,
+            workers,
         }
-
-        info!("WorkerPool has shut down gracefully.");
     }
 
-    /// Sends a task to the worker pool.
-    pub fn send_task(&self, task: WorkerTask) -> Result<(), mpsc::SendError<WorkerTask>> {
-        self.task_sender.send(task)
+    /// Submits a new task to be processed by the workers.
+    pub fn submit_task(&self, task: TweakTask) -> Result<(), channel::SendError<WorkerCommand>> {
+        let command = match task.action {
+            TweakAction::Apply => WorkerCommand::ApplyTweak {
+                id: task.id,
+                method: task.method,
+            },
+            TweakAction::Revert => WorkerCommand::RevertTweak {
+                id: task.id,
+                method: task.method,
+            },
+            TweakAction::ReadInitialState => WorkerCommand::ReadTweakState {
+                id: task.id,
+                method: task.method,
+            },
+        };
+        self.command_sender.send(command)
     }
 
-    /// Attempts to receive a result from the worker pool without blocking.
-    pub fn try_recv_result(&self) -> Option<WorkerResult> {
+    /// Attempts to receive a task result without blocking.
+    pub fn try_recv_result(&self) -> Option<TweakResult> {
         self.result_receiver.try_recv().ok()
     }
 
-    /// Sends a shutdown signal to the worker pool.
-    pub fn shutdown(&self) {
-        if let Err(e) = self.task_sender.send(WorkerTask::Shutdown) {
-            error!("Failed to send Shutdown task to WorkerPool: {}", e);
+    /// Gracefully shuts down all workers by sending a shutdown command.
+    pub fn shutdown(&mut self) {
+        // Send a Shutdown command to each worker
+        for _ in &self.workers {
+            let _ = self.command_sender.send(WorkerCommand::Shutdown);
         }
-    }
-}
 
-/// The main loop for each worker thread.
-fn worker_loop(
-    worker_id: usize,
-    task_receiver: Receiver<WorkerTask>,
-    result_sender: Sender<WorkerResult>,
-    tweaks: Arc<DashMap<TweakId, Tweak>>,
-) {
-    info!("Worker {} started.", worker_id);
-    loop {
-        match task_receiver.recv() {
-            Ok(task) => match task {
-                WorkerTask::ReadInitialState { id } => {
-                    handle_read_initial_state(id, &tweaks, &result_sender);
-                }
-                WorkerTask::ApplyTweak { id } => {
-                    handle_apply_tweak(id, &tweaks, &result_sender);
-                }
-                WorkerTask::RevertTweak { id } => {
-                    handle_revert_tweak(id, &tweaks, &result_sender);
-                }
-                WorkerTask::Shutdown => {
-                    info!("Worker {} received Shutdown task.", worker_id);
-                    if let Err(e) = result_sender.send(WorkerResult::ShutdownComplete) {
-                        error!(
-                            "Worker {} failed to send ShutdownComplete: {}",
-                            worker_id, e
-                        );
-                    }
-                    break;
-                }
-            },
-            Err(_) => {
-                // Channel closed, terminate the worker
-                info!(
-                    "Worker {} detected closed task channel. Terminating.",
-                    worker_id
-                );
-                break;
-            }
-        }
-    }
-    info!("Worker {} has shut down.", worker_id);
-}
-
-/// Handles the ReadInitialState task.
-fn handle_read_initial_state(
-    tweak_id: TweakId,
-    tweaks: &DashMap<TweakId, Tweak>,
-    result_sender: &Sender<WorkerResult>,
-) {
-    info!("Reading initial state for {:?}.", tweak_id);
-
-    // Step 1: Acquire the lock briefly to clone the tweak
-    let tweak_clone = if let Some(tweak) = tweaks.get(&tweak_id) {
-        tweak.clone()
-    } else {
-        // Handle tweak not found
-        warn!("Tweak {:?} not found during ReadInitialState.", tweak_id);
-        let _ = result_sender.send(WorkerResult::InitialStateRead {
-            id: tweak_id,
-            success: false,
-            error: Some("Tweak not found".to_string()),
-        });
-        return;
-    };
-
-    // Step 2: Perform the initial state read without holding the lock
-    let initial_state_result = tweak_clone.initial_state(tweak_id);
-
-    // Step 3: Reacquire the lock to update the tweak
-    match initial_state_result {
-        Ok(is_enabled) => {
-            if let Some(mut tweak) = tweaks.get_mut(&tweak_id) {
-                tweak.set_enabled(is_enabled);
-                tweak.set_status(TweakStatus::Idle);
-                if tweak.requires_reboot {
-                    tweak.set_pending_reboot(is_enabled);
+        // Wait for workers to finish
+        for worker in &mut self.workers {
+            // Take the handle out of the Option
+            if let Some(handle) = worker.handle.take() {
+                if let Err(e) = handle.join() {
+                    error!("Failed to join worker thread: {:?}", e);
                 }
             }
-            info!(
-                "Initial state read successfully for {:?}. Enabled: {}",
-                tweak_id, is_enabled
-            );
-            let _ = result_sender.send(WorkerResult::InitialStateRead {
-                id: tweak_id,
-                success: true,
-                error: None,
-            });
-        }
-        Err(e) => {
-            if let Some(mut tweak) = tweaks.get_mut(&tweak_id) {
-                tweak.set_status(TweakStatus::Failed(e.to_string()));
-            }
-            warn!("Failed to read initial state for {:?}: {:?}", tweak_id, e);
-            let _ = result_sender.send(WorkerResult::InitialStateRead {
-                id: tweak_id,
-                success: false,
-                error: Some(e.to_string()),
-            });
-        }
-    }
-}
-
-/// Handles the ApplyTweak task.
-fn handle_apply_tweak(
-    tweak_id: TweakId,
-    tweaks: &DashMap<TweakId, Tweak>,
-    result_sender: &Sender<WorkerResult>,
-) {
-    info!("Applying tweak {:?}.", tweak_id);
-
-    // Clone the tweak without holding the lock
-    let tweak_clone = if let Some(tweak) = tweaks.get(&tweak_id) {
-        tweak.clone()
-    } else {
-        // Handle tweak not found
-        warn!("Tweak {:?} not found during ApplyTweak.", tweak_id);
-        let _ = result_sender.send(WorkerResult::TweakApplied {
-            id: tweak_id,
-            success: false,
-            error: Some("Tweak not found".to_string()),
-        });
-        return;
-    };
-
-    // Perform the apply operation
-    let apply_result = tweak_clone.apply(tweak_id);
-
-    // Send the result back to the main thread
-    match apply_result {
-        Ok(_) => {
-            let _ = result_sender.send(WorkerResult::TweakApplied {
-                id: tweak_id,
-                success: true,
-                error: None,
-            });
-        }
-        Err(e) => {
-            let _ = result_sender.send(WorkerResult::TweakApplied {
-                id: tweak_id,
-                success: false,
-                error: Some(e.to_string()),
-            });
-        }
-    }
-}
-/// Handles the RevertTweak task.
-fn handle_revert_tweak(
-    tweak_id: TweakId,
-    tweaks: &DashMap<TweakId, Tweak>,
-    result_sender: &Sender<WorkerResult>,
-) {
-    info!("Reverting tweak {:?}.", tweak_id);
-
-    // Step 1: Acquire the lock briefly to clone the tweak
-    let tweak_clone = if let Some(tweak) = tweaks.get(&tweak_id) {
-        tweak.clone()
-    } else {
-        // Handle tweak not found
-        warn!("Tweak {:?} not found during RevertTweak.", tweak_id);
-        let _ = result_sender.send(WorkerResult::TweakReverted {
-            id: tweak_id,
-            success: false,
-            error: Some("Tweak not found".to_string()),
-        });
-        return;
-    };
-
-    // Step 2: Perform the revert operation without holding the lock
-    let revert_result = tweak_clone.revert(tweak_id);
-
-    // Step 3: Reacquire the lock to update the tweak
-    match revert_result {
-        Ok(_) => {
-            if let Some(mut tweak) = tweaks.get_mut(&tweak_id) {
-                tweak.set_enabled(false);
-                tweak.set_status(TweakStatus::Idle);
-                if tweak.requires_reboot {
-                    tweak.set_pending_reboot(false);
-                }
-            }
-            info!("Tweak {:?} reverted successfully.", tweak_id);
-            let _ = result_sender.send(WorkerResult::TweakReverted {
-                id: tweak_id,
-                success: true,
-                error: None,
-            });
-        }
-        Err(e) => {
-            if let Some(mut tweak) = tweaks.get_mut(&tweak_id) {
-                tweak.set_status(TweakStatus::Failed(e.to_string()));
-            }
-            warn!("Failed to revert tweak {:?}: {:?}", tweak_id, e);
-            let _ = result_sender.send(WorkerResult::TweakReverted {
-                id: tweak_id,
-                success: false,
-                error: Some(e.to_string()),
-            });
         }
     }
 }

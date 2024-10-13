@@ -439,7 +439,7 @@ impl Drop for LsaHandleGuard {
 }
 
 pub fn se_lock_memory_privilege() -> Tweak {
-    Tweak::group_policy(
+    Tweak::group_policy_tweak(
         "SeLockMemoryPrivilege".to_string(),
         "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),
         TweakCategory::Memory,

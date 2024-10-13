@@ -1,8 +1,12 @@
 // src/tweaks/rust.rs
 
+use std::process::Command;
+
+use anyhow::Error;
 use DisplaySettings::{get_display_settings, set_display_settings, DisplaySettingsType};
 
 use super::{Tweak, TweakCategory, TweakId, TweakMethod};
+use crate::widgets::TweakWidget;
 
 pub struct LowResMode {
     pub default: DisplaySettingsType,
@@ -65,13 +69,25 @@ impl TweakMethod for LowResMode {
 
 /// Function to create the `Low Resolution Mode` Rust tweak.
 pub fn low_res_mode() -> Tweak {
-    Tweak::rust(
+    Tweak::rust_tweak(
         "Low Resolution Mode".to_string(),
         "Sets the display to a lower resolution to conserve resources or improve performance."
             .to_string(),
         TweakCategory::Graphics,
         LowResMode::default(),
-        false, // Set to true if reboot is required
+        TweakWidget::Toggle,
+        false,
+    )
+}
+
+pub fn process_idle_tasks() -> Tweak {
+    Tweak::rust_tweak(
+        "Process Idle Tasks".to_string(),
+        "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.".to_string(),
+        TweakCategory::Action,
+        ProcessIdleTasksTweak,
+        TweakWidget::Button,
+        false,
     )
 }
 
@@ -140,5 +156,34 @@ mod tests {
         let tweak = low_res_mode();
         let result = tweak.method.revert(TweakId::LowResMode);
         println!("{:?}", result);
+    }
+}
+
+pub struct ProcessIdleTasksTweak;
+
+impl TweakMethod for ProcessIdleTasksTweak {
+    fn initial_state(&self, _id: TweakId) -> Result<bool, Error> {
+        // Since this is an action, it doesn't have a state
+        Ok(false)
+    }
+
+    fn apply(&self, id: TweakId) -> Result<(), Error> {
+        tracing::info!("{:?} -> Running Process Idle Tasks.", id);
+
+        let mut cmd = Command::new("Rundll32.exe");
+        cmd.args(["advapi32.dll,ProcessIdleTasks"]);
+
+        // Spawn the command asynchronously
+        cmd.spawn().map_err(|e| {
+            tracing::error!("{id:?} -> Failed to run ProcessIdleTasks: {e:?}");
+            anyhow::Error::from(e)
+        })?;
+
+        // Return immediately without waiting for the command to finish
+        Ok(())
+    }
+
+    fn revert(&self, _id: TweakId) -> Result<(), Error> {
+        Ok(())
     }
 }
