@@ -71,21 +71,16 @@ pub enum TweakCategory {
 
 impl TweakCategory {
     pub fn left() -> Vec<Self> {
-        vec![
-            TweakCategory::System,
-            TweakCategory::Kernel,
-            TweakCategory::Memory,
-            TweakCategory::Storage,
-        ]
+        vec![Self::System, Self::Kernel, Self::Memory, Self::Storage]
     }
 
     pub fn right() -> Vec<Self> {
         vec![
-            TweakCategory::Graphics,
-            TweakCategory::Power,
-            TweakCategory::Security,
-            TweakCategory::Telemetry,
-            TweakCategory::Action,
+            Self::Graphics,
+            Self::Power,
+            Self::Security,
+            Self::Telemetry,
+            Self::Action,
         ]
     }
 }
@@ -256,130 +251,127 @@ pub enum TweakId {
 
 /// Initializes all tweaks with their respective configurations.
 pub fn all() -> DashMap<TweakId, Tweak> {
-    let tweaks = DashMap::new();
-
-    tweaks.insert(
-        TweakId::LargeSystemCache,
-        registry::enable_large_system_cache(),
-    );
-    tweaks.insert(
-        TweakId::SystemResponsiveness,
-        registry::system_responsiveness(),
-    );
-    tweaks.insert(
-        TweakId::DisableHWAcceleration,
-        registry::disable_hw_acceleration(),
-    );
-    tweaks.insert(
-        TweakId::Win32PrioritySeparation,
-        registry::win32_priority_separation(),
-    );
-    tweaks.insert(
-        TweakId::DisableCoreParking,
-        registry::disable_core_parking(),
-    );
-    tweaks.insert(TweakId::ProcessIdleTasks, powershell::process_idle_tasks());
-    tweaks.insert(
-        TweakId::SeLockMemoryPrivilege,
-        group_policy::se_lock_memory_privilege(),
-    );
-    tweaks.insert(
-        TweakId::UltimatePerformancePlan,
-        powershell::enable_ultimate_performance_plan(),
-    );
-    tweaks.insert(
-        TweakId::NoLowDiskSpaceChecks,
-        registry::disable_low_disk_space_checks(),
-    );
-    tweaks.insert(
-        TweakId::DisableNtfsTunnelling,
-        registry::disable_ntfs_tunnelling(),
-    );
-    tweaks.insert(TweakId::DistributeTimers, registry::distribute_timers());
-    tweaks.insert(
-        TweakId::AdditionalKernelWorkerThreads,
-        powershell::additional_kernel_worker_threads(),
-    );
-    tweaks.insert(TweakId::DisableHPET, powershell::disable_hpet());
-
-    tweaks.insert(
-        TweakId::AggressiveDpcHandling,
-        powershell::aggressive_dpc_handling(),
-    );
-    tweaks.insert(
-        TweakId::EnhancedKernelPerformance,
-        powershell::enhanced_kernel_performance(),
-    );
-    tweaks.insert(
-        TweakId::DisableRamCompression,
-        powershell::disable_ram_compression(),
-    );
-    tweaks.insert(
-        TweakId::DisableApplicationTelemetry,
-        registry::disable_application_telemetry(),
-    );
-    tweaks.insert(
-        TweakId::DisableWindowsErrorReporting,
-        registry::disable_windows_error_reporting(),
-    );
-    tweaks.insert(
-        TweakId::DisableLocalFirewall,
-        powershell::disable_local_firewall(),
-    );
-    tweaks.insert(
-        TweakId::DontVerifyRandomDrivers,
-        registry::dont_verify_random_drivers(),
-    );
-    tweaks.insert(
-        TweakId::DisableDriverPaging,
-        registry::disable_driver_paging(),
-    );
-    tweaks.insert(TweakId::DisablePrefetcher, registry::disable_prefetcher());
-    tweaks.insert(
-        TweakId::DisableSuccessAuditing,
-        powershell::disable_success_auditing(),
-    );
-    tweaks.insert(TweakId::ThreadDpcDisable, registry::thread_dpc_disable());
-    tweaks.insert(
-        TweakId::SvcHostSplitThreshold,
-        registry::svc_host_split_threshold(),
-    );
-    tweaks.insert(TweakId::DisablePagefile, powershell::disable_pagefile());
-    tweaks.insert(
-        TweakId::DisableSpeculativeExecutionMitigations,
-        powershell::disable_speculative_execution_mitigations(),
-    );
-    tweaks.insert(
-        TweakId::DisableDataExecutionPrevention,
-        powershell::disable_data_execution_prevention(),
-    );
-    tweaks.insert(
-        TweakId::DisableWindowsDefender,
-        registry::disable_windows_defender(),
-    );
-    tweaks.insert(
-        TweakId::DisablePageFileEncryption,
-        registry::disable_page_file_encryption(),
-    );
-    tweaks.insert(
-        TweakId::DisableProcessIdleStates,
-        powershell::disable_process_idle_states(),
-    );
-    tweaks.insert(
-        TweakId::KillAllNonCriticalServices,
-        powershell::kill_all_non_critical_services(),
-    );
-    tweaks.insert(TweakId::DisableIntelTSX, registry::disable_intel_tsx());
-    tweaks.insert(
-        TweakId::DisableWindowsMaintenance,
-        registry::disable_windows_maintenance(),
-    );
-    tweaks.insert(TweakId::KillExplorer, powershell::kill_explorer());
-    tweaks.insert(
-        TweakId::HighPerformanceVisualSettings,
-        powershell::high_performance_visual_settings(),
-    );
-    tweaks.insert(TweakId::LowResMode, rust::low_res_mode());
-
-    tweaks
+    DashMap::from_iter(vec![
+        (
+            TweakId::LargeSystemCache,
+            registry::enable_large_system_cache(),
+        ),
+        (
+            TweakId::SystemResponsiveness,
+            registry::system_responsiveness(),
+        ),
+        (
+            TweakId::DisableHWAcceleration,
+            registry::disable_hw_acceleration(),
+        ),
+        (
+            TweakId::Win32PrioritySeparation,
+            registry::win32_priority_separation(),
+        ),
+        (
+            TweakId::DisableCoreParking,
+            registry::disable_core_parking(),
+        ),
+        (TweakId::ProcessIdleTasks, powershell::process_idle_tasks()),
+        (
+            TweakId::SeLockMemoryPrivilege,
+            group_policy::se_lock_memory_privilege(),
+        ),
+        (
+            TweakId::UltimatePerformancePlan,
+            powershell::enable_ultimate_performance_plan(),
+        ),
+        (
+            TweakId::NoLowDiskSpaceChecks,
+            registry::disable_low_disk_space_checks(),
+        ),
+        (
+            TweakId::DisableNtfsTunnelling,
+            registry::disable_ntfs_tunnelling(),
+        ),
+        (TweakId::DistributeTimers, registry::distribute_timers()),
+        (
+            TweakId::AdditionalKernelWorkerThreads,
+            powershell::additional_kernel_worker_threads(),
+        ),
+        (TweakId::DisableHPET, powershell::disable_hpet()),
+        (
+            TweakId::AggressiveDpcHandling,
+            powershell::aggressive_dpc_handling(),
+        ),
+        (
+            TweakId::EnhancedKernelPerformance,
+            powershell::enhanced_kernel_performance(),
+        ),
+        (
+            TweakId::DisableRamCompression,
+            powershell::disable_ram_compression(),
+        ),
+        (
+            TweakId::DisableApplicationTelemetry,
+            registry::disable_application_telemetry(),
+        ),
+        (
+            TweakId::DisableWindowsErrorReporting,
+            registry::disable_windows_error_reporting(),
+        ),
+        (
+            TweakId::DisableLocalFirewall,
+            powershell::disable_local_firewall(),
+        ),
+        (
+            TweakId::DontVerifyRandomDrivers,
+            registry::dont_verify_random_drivers(),
+        ),
+        (
+            TweakId::DisableDriverPaging,
+            registry::disable_driver_paging(),
+        ),
+        (TweakId::DisablePrefetcher, registry::disable_prefetcher()),
+        (
+            TweakId::DisableSuccessAuditing,
+            powershell::disable_success_auditing(),
+        ),
+        (TweakId::ThreadDpcDisable, registry::thread_dpc_disable()),
+        (
+            TweakId::SvcHostSplitThreshold,
+            registry::svc_host_split_threshold(),
+        ),
+        (TweakId::DisablePagefile, powershell::disable_pagefile()),
+        (
+            TweakId::DisableSpeculativeExecutionMitigations,
+            powershell::disable_speculative_execution_mitigations(),
+        ),
+        (
+            TweakId::DisableDataExecutionPrevention,
+            powershell::disable_data_execution_prevention(),
+        ),
+        (
+            TweakId::DisableWindowsDefender,
+            registry::disable_windows_defender(),
+        ),
+        (
+            TweakId::DisablePageFileEncryption,
+            registry::disable_page_file_encryption(),
+        ),
+        (
+            TweakId::DisableProcessIdleStates,
+            powershell::disable_process_idle_states(),
+        ),
+        (
+            TweakId::KillAllNonCriticalServices,
+            powershell::kill_all_non_critical_services(),
+        ),
+        (TweakId::DisableIntelTSX, registry::disable_intel_tsx()),
+        (
+            TweakId::DisableWindowsMaintenance,
+            registry::disable_windows_maintenance(),
+        ),
+        (TweakId::KillExplorer, powershell::kill_explorer()),
+        (
+            TweakId::HighPerformanceVisualSettings,
+            powershell::high_performance_visual_settings(),
+        ),
+        (TweakId::LowResMode, rust::low_res_mode()),
+    ])
 }
