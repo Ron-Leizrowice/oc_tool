@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
+// src/tweaks/rust.rs
 
 use DisplaySettings::{get_display_settings, set_display_settings, DisplaySettingsType};
 
-use super::{method::TweakMethod, Tweak, TweakCategory, TweakId};
+use super::{Tweak, TweakCategory, TweakId, TweakMethod};
 
 pub struct LowResMode {
     pub default: DisplaySettingsType,
@@ -64,7 +64,7 @@ impl TweakMethod for LowResMode {
 }
 
 /// Function to create the `Low Resolution Mode` Rust tweak.
-pub fn low_res_mode() -> Arc<Mutex<Tweak>> {
+pub fn low_res_mode() -> Tweak {
     Tweak::rust(
         "Low Resolution Mode".to_string(),
         "Sets the display to a lower resolution to conserve resources or improve performance."
@@ -131,14 +131,14 @@ mod tests {
     #[test]
     fn test_tweak_apply() {
         let tweak = low_res_mode();
-        let result = tweak.lock().unwrap().method.apply(TweakId::LowResMode);
+        let result = tweak.method.apply(TweakId::LowResMode);
         println!("{:?}", result);
     }
 
     #[test]
     fn test_tweak_revert() {
         let tweak = low_res_mode();
-        let result = tweak.lock().unwrap().method.revert(TweakId::LowResMode);
+        let result = tweak.method.revert(TweakId::LowResMode);
         println!("{:?}", result);
     }
 }

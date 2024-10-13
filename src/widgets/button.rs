@@ -49,7 +49,6 @@ pub fn action_button(state: &mut ButtonState) -> impl egui::Widget + '_ {
 
             // Draw the button background
             ui.painter()
-                // Dark Navy Blue
                 .rect_filled(rect, Rounding::same(5.0), visuals.bg_fill);
             ui.painter()
                 .rect_stroke(rect, Rounding::same(5.0), visuals.bg_stroke);
@@ -58,7 +57,7 @@ pub fn action_button(state: &mut ButtonState) -> impl egui::Widget + '_ {
             let galley = ui.fonts(|f| {
                 f.layout_no_wrap(
                     label.to_string(),
-                    FontId::proportional(12.0), // Adjust the font size here
+                    FontId::proportional(12.0),
                     visuals.text_color(),
                 )
             });

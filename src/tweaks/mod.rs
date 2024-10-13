@@ -1,22 +1,60 @@
 // src/tweaks/mod.rs
+
 pub mod group_policy;
-pub mod method;
 pub mod powershell;
 pub mod registry;
 pub mod rust;
 
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
+use anyhow::Error;
+use dashmap::DashMap;
 use group_policy::GroupPolicyTweak;
-use method::TweakMethod;
 use powershell::PowershellTweak;
 use registry::RegistryTweak;
 
 use crate::widgets::TweakWidget;
+
+/// Represents a single tweak that can be applied to the system.
+pub struct Tweak {
+    /// Display name of the tweak.
+    pub name: String,
+    /// Description of the tweak and its effects, shown in hover tooltip.
+    pub description: String,
+    /// Category of the tweak, used for grouping tweaks in the UI.
+    pub category: TweakCategory,
+    /// The method used to apply or revert the tweak.
+    pub method: Arc<dyn TweakMethod>,
+    /// The widget to use for each tweak
+    pub widget: TweakWidget,
+    /// Indicates whether the tweak is currently enabled.
+    pub enabled: bool,
+    /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
+    pub status: TweakStatus,
+    /// Whether the tweak requires restarting the system to take effect.
+    pub requires_reboot: bool,
+    /// If the tweak has been applied during this session, but still requires a reboot.
+    pub pending_reboot: bool,
+}
+
+/// Trait defining the behavior for all tweak methods.
+pub trait TweakMethod: Send + Sync {
+    /// Checks if the tweak is currently enabled.
+    fn initial_state(&self, id: TweakId) -> Result<bool, Error>;
+
+    /// Applies the tweak.
+    fn apply(&self, id: TweakId) -> Result<(), Error>;
+
+    /// Reverts the tweak.
+    fn revert(&self, id: TweakId) -> Result<(), Error>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TweakStatus {
+    Idle,
+    Applying,
+    Failed(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TweakCategory {
@@ -49,6 +87,129 @@ impl TweakCategory {
             TweakCategory::Telemetry,
             TweakCategory::Action,
         ]
+    }
+}
+
+impl Tweak {
+    pub fn registry_tweak(
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: RegistryTweak,
+        requires_reboot: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            requires_reboot,
+            status: TweakStatus::Idle,
+            enabled: false,
+            pending_reboot: false,
+        }
+    }
+
+    pub fn powershell(
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: PowershellTweak,
+        requires_reboot: bool,
+    ) -> Self {
+        let widget = match method.undo_script {
+            Some(_) => TweakWidget::ToggleSwitch,
+            None => TweakWidget::ActionButton,
+        };
+
+        Self {
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget,
+            requires_reboot,
+            status: TweakStatus::Idle,
+            enabled: false,
+            pending_reboot: false,
+        }
+    }
+
+    pub fn group_policy(
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: GroupPolicyTweak,
+        requires_reboot: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            requires_reboot,
+            status: TweakStatus::Idle,
+            enabled: false,
+            pending_reboot: false,
+        }
+    }
+
+    pub fn rust<M: TweakMethod + 'static>(
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: M,
+        requires_reboot: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::ToggleSwitch,
+            requires_reboot,
+            status: TweakStatus::Idle,
+            enabled: false,
+            pending_reboot: false,
+        }
+    }
+
+    pub fn get_status(&self) -> TweakStatus {
+        self.status.clone()
+    }
+
+    pub fn set_status(&mut self, status: TweakStatus) {
+        self.status = status;
+    }
+
+    pub fn set_enabled(&mut self, value: bool) {
+        self.enabled = value;
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_pending_reboot(&mut self, value: bool) {
+        self.pending_reboot = value;
+    }
+
+    pub fn is_pending_reboot(&self) -> bool {
+        self.pending_reboot
+    }
+
+    pub fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
+        self.method.initial_state(id)
+    }
+
+    pub fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
+        self.method.apply(id)
+    }
+
+    pub fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
+        self.method.revert(id)
     }
 }
 
@@ -93,162 +254,9 @@ pub enum TweakId {
     LowResMode,
 }
 
-/// Represents a single tweak that can be applied to the system.
-#[derive(Clone)]
-pub struct Tweak {
-    /// Display name of the tweak.
-    pub name: String,
-    /// Description of the tweak and its effects, shown in hover tooltip.
-    pub description: String,
-    /// Category of the tweak, used for grouping tweaks in the UI.
-    pub category: TweakCategory,
-    /// The method used to apply or revert the tweak.
-    pub method: Arc<dyn TweakMethod>,
-    /// The widget to use for each tweak
-    pub widget: TweakWidget,
-    /// Indicates whether the tweak is currently enabled.
-    pub enabled: Arc<Mutex<bool>>,
-    /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
-    pub status: Arc<Mutex<TweakStatus>>,
-    /// Whether the tweak requires restarting the system to take effect.
-    pub requires_reboot: bool,
-    /// If the tweak has been applied during this session, but still requires a reboot.
-    pub pending_reboot: Arc<Mutex<bool>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TweakStatus {
-    Idle,
-    Applying,
-    Failed(String),
-}
-
-impl Tweak {
-    pub fn registry_tweak(
-        name: String,
-        description: String,
-        category: TweakCategory,
-        method: RegistryTweak,
-        requires_reboot: bool,
-    ) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            name,
-            description,
-            category,
-            method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
-            enabled: Arc::new(Mutex::new(false)),
-            status: Arc::new(Mutex::new(TweakStatus::Idle)),
-            requires_reboot,
-            pending_reboot: Arc::new(Mutex::new(false)),
-        }))
-    }
-
-    pub fn powershell(
-        name: String,
-        description: String,
-        category: TweakCategory,
-        method: PowershellTweak,
-        requires_reboot: bool,
-    ) -> Arc<Mutex<Self>> {
-        let widget = match method.undo_script {
-            Some(_) => TweakWidget::ToggleSwitch,
-            None => TweakWidget::ActionButton,
-        };
-
-        Arc::new(Mutex::new(Self {
-            name,
-            description,
-            category,
-            method: Arc::new(method),
-            widget,
-            enabled: Arc::new(Mutex::new(false)),
-            status: Arc::new(Mutex::new(TweakStatus::Idle)),
-            requires_reboot,
-            pending_reboot: Arc::new(Mutex::new(false)),
-        }))
-    }
-
-    pub fn group_policy(
-        name: String,
-        description: String,
-        category: TweakCategory,
-        method: GroupPolicyTweak,
-        requires_reboot: bool,
-    ) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            name,
-            description,
-            category,
-            method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
-            enabled: Arc::new(Mutex::new(false)),
-            status: Arc::new(Mutex::new(TweakStatus::Idle)),
-            requires_reboot,
-            pending_reboot: Arc::new(Mutex::new(false)),
-        }))
-    }
-
-    pub fn rust<M: TweakMethod + 'static>(
-        name: String,
-        description: String,
-        category: TweakCategory,
-        method: M,
-        requires_reboot: bool,
-    ) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            name,
-            description,
-            category,
-            method: Arc::new(method),
-            widget: TweakWidget::ToggleSwitch,
-            enabled: Arc::new(Mutex::new(false)),
-            status: Arc::new(Mutex::new(TweakStatus::Idle)),
-            requires_reboot,
-            pending_reboot: Arc::new(Mutex::new(false)),
-        }))
-    }
-
-    pub fn get_status(&self) -> TweakStatus {
-        self.status.lock().unwrap().clone()
-    }
-
-    pub fn set_status(&self, status: TweakStatus) {
-        *self.status.lock().unwrap() = status;
-    }
-
-    pub fn set_enabled(&self) {
-        *self.enabled.lock().unwrap() = true;
-    }
-
-    pub fn set_disabled(&self) {
-        *self.enabled.lock().unwrap() = false;
-    }
-
-    pub fn pending_reboot(&self) {
-        *self.pending_reboot.lock().unwrap() = true;
-    }
-
-    pub fn cancel_pending_reboot(&self) {
-        *self.pending_reboot.lock().unwrap() = false;
-    }
-
-    pub fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
-        self.method.initial_state(id)
-    }
-
-    pub fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        self.method.apply(id)
-    }
-
-    pub fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        self.method.revert(id)
-    }
-}
-
 /// Initializes all tweaks with their respective configurations.
-pub fn all() -> HashMap<TweakId, Arc<Mutex<Tweak>>> {
-    let mut tweaks = HashMap::new();
+pub fn all() -> DashMap<TweakId, Tweak> {
+    let tweaks = DashMap::new();
 
     tweaks.insert(
         TweakId::LargeSystemCache,

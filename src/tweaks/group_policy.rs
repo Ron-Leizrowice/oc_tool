@@ -1,9 +1,6 @@
 // src/tweaks/group_policy_tweaks.rs
 
-use std::{
-    ptr,
-    sync::{Arc, Mutex},
-};
+use std::ptr;
 
 use windows::{
     core::{PCWSTR, PWSTR},
@@ -20,7 +17,7 @@ use windows::{
     },
 };
 
-use super::{method::TweakMethod, Tweak, TweakCategory, TweakId};
+use super::{Tweak, TweakCategory, TweakId, TweakMethod};
 
 /// Group Policy related constants.
 pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
@@ -441,7 +438,7 @@ impl Drop for LsaHandleGuard {
     }
 }
 
-pub fn se_lock_memory_privilege() -> Arc<Mutex<Tweak>> {
+pub fn se_lock_memory_privilege() -> Tweak {
     Tweak::group_policy(
         "SeLockMemoryPrivilege".to_string(),
         "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),

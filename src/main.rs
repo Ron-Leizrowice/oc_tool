@@ -5,11 +5,9 @@ mod utils;
 mod widgets;
 mod worker;
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
+use dashmap::DashMap;
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
@@ -47,7 +45,7 @@ const NUM_WORKERS: usize = 8;
 
 /// Represents your application's main structure.
 pub struct MyApp {
-    pub tweaks: HashMap<TweakId, Arc<Mutex<Tweak>>>,
+    pub tweaks: Arc<DashMap<TweakId, Tweak>>,
     pub worker_pool: WorkerPool,
 
     // Power management fields
@@ -63,18 +61,15 @@ impl MyApp {
         let _app_guard = app_span.enter();
 
         // Initialize tweaks
-        let tweaks = tweaks::all();
+        let tweaks = Arc::new(tweaks::all());
 
         // Initialize worker pool
-        let worker_pool = WorkerPool::new(NUM_WORKERS);
+        let worker_pool = WorkerPool::new(NUM_WORKERS, Arc::clone(&tweaks));
 
         // Initialize the current state of all tweaks
-        for (id, tweak) in &tweaks {
+        for tweak_id in tweaks.iter().map(|entry| *entry.key()) {
             worker_pool
-                .send_task(WorkerTask::ReadInitialState {
-                    id: *id,
-                    tweak: Arc::clone(tweak),
-                })
+                .send_task(WorkerTask::ReadInitialState { id: tweak_id })
                 .expect("Failed to send ReadInitialState task to worker pool");
         }
 
@@ -88,8 +83,8 @@ impl MyApp {
 
     fn count_tweaks_pending_reboot(&self) -> usize {
         self.tweaks
-            .values()
-            .filter(|tweak| *tweak.lock().unwrap().pending_reboot.lock().unwrap())
+            .iter()
+            .filter(|tweak| tweak.value().pending_reboot)
             .count()
     }
 
@@ -98,68 +93,63 @@ impl MyApp {
         while let Some(result) = self.worker_pool.try_recv_result() {
             match result {
                 WorkerResult::TweakApplied { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.get(&id) {
-                        let tweak_guard = tweak.lock().unwrap();
+                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
                         if success {
-                            tweak_guard.set_status(TweakStatus::Idle);
+                            tweak.set_status(TweakStatus::Idle);
 
-                            if tweak_guard.requires_reboot {
-                                tweak_guard.pending_reboot();
+                            if tweak.requires_reboot {
+                                tweak.set_pending_reboot(true);
                                 info!("{id:?} -> Tweak applied successfully. Pending reboot.");
                             } else {
                                 info!("{id:?} -> Tweak applied successfully. No reboot required.");
                             }
                         } else {
-                            tweak_guard.set_status(TweakStatus::Failed(
+                            tweak.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
-                            warn!("{id:?} -> Tweak apply failed: {:?}", tweak_guard.status);
+                            warn!("{id:?} -> Tweak apply failed: {:?}", tweak.get_status());
                         }
                     } else {
                         warn!("Received result for unknown tweak: {id:?}");
                     }
                 }
                 WorkerResult::TweakReverted { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.get(&id) {
-                        let tweak_guard = tweak.lock().unwrap();
+                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
                         if success {
-                            tweak_guard.set_status(TweakStatus::Idle);
+                            tweak.set_status(TweakStatus::Idle);
 
-                            if tweak_guard.requires_reboot {
-                                tweak_guard.cancel_pending_reboot();
+                            if tweak.requires_reboot {
+                                tweak.set_pending_reboot(false);
                                 info!(
                                     "{id:?} -> Tweak reverted successfully. Pending reboot cleared.",
-
                                 );
                             } else {
                                 info!("{id:?} -> Tweak reverted successfully. No reboot required.",);
                             }
                         } else {
-                            tweak_guard.set_status(TweakStatus::Failed(
+                            tweak.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
-                            warn!("{id:?} -> Tweak reversion failed: {:?}", tweak_guard.status);
+                            warn!("{id:?} -> Tweak reversion failed: {:?}", tweak.get_status());
                         }
                     } else {
                         warn!("Received result for unknown tweak: {id:?}");
                     }
                 }
                 WorkerResult::InitialStateRead { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.get(&id) {
-                        let tweak_guard = tweak.lock().unwrap();
+                    if let Some(mut tweak) = self.tweaks.get_mut(&id) {
                         if success {
-                            tweak_guard.set_status(TweakStatus::Idle);
+                            tweak.set_status(TweakStatus::Idle);
                             info!(
-                                "{id:?} -> Initial state read successfully. Enabled: {}",
-                                *tweak_guard.enabled.lock().unwrap()
+                                "{id:?} -> Initial state read successfully. Setting tweak to Idle."
                             );
                         } else {
-                            tweak_guard.set_status(TweakStatus::Failed(
+                            tweak.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
                             warn!(
                                 "{id:?} -> Failed to read initial state: {:?}",
-                                tweak_guard.status
+                                tweak.get_status()
                             );
                         }
                     } else {
@@ -176,15 +166,9 @@ impl MyApp {
     /// Dispatches a task to apply or revert a tweak based on user interaction.
     fn dispatch_task(&self, id: TweakId, apply: bool) {
         let task = if apply {
-            WorkerTask::ApplyTweak {
-                id,
-                tweak: Arc::clone(self.tweaks.get(&id).unwrap()),
-            }
+            WorkerTask::ApplyTweak { id }
         } else {
-            WorkerTask::RevertTweak {
-                id,
-                tweak: Arc::clone(self.tweaks.get(&id).unwrap()),
-            }
+            WorkerTask::RevertTweak { id }
         };
 
         if let Err(e) = self.worker_pool.send_task(task) {
@@ -221,8 +205,9 @@ impl MyApp {
         let category_tweaks: Vec<TweakId> = self
             .tweaks
             .iter()
-            .filter_map(|(id, tweak)| {
-                if tweak.lock().unwrap().category == category {
+            .filter_map(|tweak_entry| {
+                let (id, tweak) = tweak_entry.pair();
+                if tweak.category == category {
                     Some(*id)
                 } else {
                     None
@@ -272,74 +257,77 @@ impl MyApp {
                 ui.horizontal(|ui| {
                     // **Label Section**
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let tweak_guard = self.tweaks.get(&tweak_id).unwrap().lock().unwrap();
-                        ui.label(
-                            egui::RichText::new(&tweak_guard.name)
-                                .text_style(egui::TextStyle::Body)
-                                .strong(),
-                        )
-                        .on_hover_text(&tweak_guard.description);
+                        if let Some(tweak) = self.tweaks.get(&tweak_id) {
+                            ui.label(
+                                egui::RichText::new(&tweak.name)
+                                    .text_style(egui::TextStyle::Body)
+                                    .strong(),
+                            )
+                            .on_hover_text(&tweak.description);
+                        }
                     });
 
                     // **Widget Section**
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let tweak_guard = self.tweaks.get(&tweak_id).unwrap().lock().unwrap();
-                        match tweak_guard.widget {
-                            TweakWidget::ToggleSwitch => {
-                                // Toggle Switch Widget
-                                let mut is_enabled = *tweak_guard.enabled.lock().unwrap();
-                                let response_toggle = ui.add(toggle_switch(&mut is_enabled));
+                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
+                            match tweak.widget {
+                                TweakWidget::ToggleSwitch => {
+                                    // Toggle Switch Widget
+                                    let mut is_enabled = tweak.is_enabled();
+                                    let response_toggle = ui.add(toggle_switch(&mut is_enabled));
 
-                                // Handle toggle interaction
-                                if response_toggle.changed() {
-                                    // Update the enabled state
-                                    {
-                                        let mut enabled_guard = tweak_guard.enabled.lock().unwrap();
-                                        *enabled_guard = is_enabled;
+                                    // Handle toggle interaction
+                                    if response_toggle.changed() {
+                                        // Update the enabled state
+                                        tweak.set_enabled(is_enabled);
+
+                                        // Dispatch the apply or revert task based on the new state
+                                        self.dispatch_task(tweak_id, is_enabled);
                                     }
 
-                                    // Dispatch the apply or revert task based on the new state
-                                    self.dispatch_task(tweak_id, is_enabled);
+                                    // Handle error messages
+                                    if let TweakStatus::Failed(ref err) = tweak.get_status() {
+                                        ui.colored_label(
+                                            egui::Color32::RED,
+                                            format!("Error: {}", err),
+                                        );
+                                    }
                                 }
+                                TweakWidget::ActionButton => {
+                                    // Apply Button Widget
+                                    let button_state = match tweak.get_status() {
+                                        TweakStatus::Idle => ButtonState::Default,
+                                        TweakStatus::Applying => ButtonState::InProgress,
+                                        TweakStatus::Failed(_) => ButtonState::Default, // Reset to Default on failure
+                                    };
 
-                                // Handle error messages
-                                if let TweakStatus::Failed(ref err) = tweak_guard.get_status() {
-                                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
-                                }
+                                    // Create a mutable reference to the button state
+                                    let mut button_state_mut = button_state;
+
+                                    // Add the ApplyButton widget
+                                    let response_button =
+                                        ui.add(action_button(&mut button_state_mut));
+
+                                    // If the button was clicked and is not in progress
+                                    if response_button.clicked()
+                                        && tweak.get_status() != TweakStatus::Applying
+                                    {
+                                        // Update the tweak's status to Applying
+                                        tweak.set_status(TweakStatus::Applying);
+
+                                        // Dispatch the apply task
+                                        self.dispatch_task(tweak_id, true);
+                                    }
+
+                                    // Handle error messages
+                                    if let TweakStatus::Failed(ref err) = tweak.get_status() {
+                                        ui.colored_label(
+                                            egui::Color32::RED,
+                                            format!("Error: {}", err),
+                                        );
+                                    }
+                                } // Handle other widget types here
                             }
-                            TweakWidget::ActionButton => {
-                                // Apply Button Widget
-                                let button_state = match tweak_guard.get_status() {
-                                    TweakStatus::Idle => ButtonState::Default,
-                                    TweakStatus::Applying => ButtonState::InProgress,
-                                    TweakStatus::Failed(_) => ButtonState::Default, // Reset to Default on failure
-                                };
-
-                                // Create a mutable reference to the button state
-                                let mut button_state_mut = button_state;
-
-                                // Add the ApplyButton widget
-                                let response_button = ui.add(action_button(&mut button_state_mut));
-
-                                // If the button was clicked and is not in progress
-                                if response_button.clicked()
-                                    && tweak_guard.get_status() != TweakStatus::Applying
-                                {
-                                    // Update the tweak's status to Applying
-                                    {
-                                        let mut status_guard = tweak_guard.status.lock().unwrap();
-                                        *status_guard = TweakStatus::Applying;
-                                    }
-
-                                    // Dispatch the apply task
-                                    self.dispatch_task(tweak_id, true);
-                                }
-
-                                // Handle error messages
-                                if let TweakStatus::Failed(ref err) = tweak_guard.get_status() {
-                                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
-                                }
-                            } // Handle other widget types here
                         }
                     });
                 });

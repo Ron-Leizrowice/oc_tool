@@ -1,13 +1,10 @@
 // src/tweaks/powershell_tweaks.rs
 
-use std::{
-    process::Command,
-    sync::{Arc, Mutex},
-};
+use std::process::Command;
 
 use tracing::{debug, error, info, warn};
 
-use super::{method::TweakMethod, Tweak, TweakCategory, TweakId};
+use super::{Tweak, TweakCategory, TweakId, TweakMethod};
 
 /// Represents a PowerShell-based tweak, including scripts to read, apply, and undo the tweak.
 #[derive(Clone, Debug)]
@@ -227,7 +224,7 @@ impl TweakMethod for PowershellTweak {
     }
 }
 
-pub fn process_idle_tasks() -> Arc<Mutex<Tweak>> {
+pub fn process_idle_tasks() -> Tweak {
     Tweak::powershell(
         "Process Idle Tasks".to_string(),
         "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.".to_string(),
@@ -242,7 +239,7 @@ pub fn process_idle_tasks() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
+pub fn enable_ultimate_performance_plan() -> Tweak {
     Tweak::powershell(
         "Enable Ultimate Performance Plan".to_string(),
         "Activates the Ultimate Performance power plan, which is tailored for demanding workloads by minimizing micro-latencies and boosting hardware performance. It disables power-saving features like core parking, hard disk sleep, and processor throttling, ensuring CPU cores run at maximum frequency. This plan also keeps I/O devices and PCIe links at full power, prioritizing performance over energy efficiency. It’s designed to reduce the delays introduced by energy-saving policies, improving responsiveness in tasks that require consistent, high-throughput system resources..".to_string(),
@@ -281,7 +278,7 @@ pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn additional_kernel_worker_threads() -> Arc<Mutex<Tweak>> {
+pub fn additional_kernel_worker_threads() -> Tweak {
     Tweak::powershell(
         "Additional Worker Threads".to_string(),
         "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.".to_string(),
@@ -319,7 +316,7 @@ pub fn additional_kernel_worker_threads() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_hpet() -> Arc<Mutex<Tweak>> {
+pub fn disable_hpet() -> Tweak {
     Tweak::powershell(
         "Disable Dynamic Tick".to_string(),
         "Disables the dynamic tick feature, which normally reduces timer interrupts during idle periods to conserve power. By disabling dynamic tick, the system maintains a constant rate of timer interrupts, improving performance in real-time applications by reducing latency and jitter. This tweak is useful in scenarios where consistent, low-latency processing is required, but it may increase power consumption as the CPU will not enter low-power states as frequently.".to_string(),
@@ -343,7 +340,7 @@ pub fn disable_hpet() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
+pub fn aggressive_dpc_handling() -> Tweak {
     Tweak::powershell(
         "Aggressive DPC Handling".to_string(),
         "This tweak modifies kernel-level settings in the Windows Registry to aggressively optimize the handling of Deferred Procedure Calls (DPCs) by disabling timeouts, watchdogs, and minimizing queue depth, aiming to enhance system responsiveness and reduce latency. However, it also removes safeguards that monitor and control long-running DPCs, which could lead to system instability or crashes in certain scenarios, particularly during high-performance or overclocking operations.".to_string(),
@@ -406,7 +403,7 @@ pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
+pub fn enhanced_kernel_performance() -> Tweak {
     Tweak::powershell(
         "Enhanced Kernel Performance".to_string(),
         "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
@@ -517,7 +514,7 @@ pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
+pub fn disable_ram_compression() -> Tweak {
     Tweak::powershell(
         "Disable RAM Compression".to_string(),
         "Disables the RAM compression feature in Windows to potentially improve system performance by reducing CPU overhead. This may lead to higher memory usage.".to_string(),
@@ -565,7 +562,7 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
+pub fn disable_local_firewall() -> Tweak {
     Tweak::powershell(
         "Disable Local Firewall".to_string(),
         "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.".to_string(),
@@ -614,7 +611,7 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
+pub fn disable_success_auditing() -> Tweak {
     Tweak::powershell(
         "Disable Success Auditing".to_string(),
         "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.".to_string(),
@@ -664,7 +661,7 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_pagefile() -> Arc<Mutex<Tweak>> {
+pub fn disable_pagefile() -> Tweak {
     Tweak::powershell(
         "Disable Pagefile".to_string(),
         "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.".to_string(),
@@ -694,7 +691,7 @@ pub fn disable_pagefile() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
+pub fn disable_speculative_execution_mitigations() -> Tweak {
     Tweak::powershell(
         "Disable Speculative Execution Mitigations".to_string(),
         "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
@@ -735,7 +732,7 @@ pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
+pub fn disable_data_execution_prevention() -> Tweak {
     Tweak::powershell(
         "Disable Data Execution Prevention".to_string(),
         "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.".to_string(),
@@ -764,7 +761,7 @@ pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn disable_process_idle_states() -> Arc<Mutex<Tweak>> {
+pub fn disable_process_idle_states() -> Tweak {
     Tweak::powershell(
         "Disable Process Idle States".to_string(),
         "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.".to_string(),
@@ -812,7 +809,7 @@ pub fn disable_process_idle_states() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
+pub fn kill_all_non_critical_services() -> Tweak {
     let services = r#"@(
         "AdobeARMservice",               # Adobe Acrobat Update Service
         "AdobeFlashPlayerUpdateSvc",     # Adobe Flash Player Update Service
@@ -1017,7 +1014,7 @@ pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
+pub fn kill_explorer() -> Tweak {
     Tweak::powershell(
         "Kill Explorer".to_string(),
         "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.".to_string(),
@@ -1075,7 +1072,7 @@ pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
     )
 }
 
-pub fn high_performance_visual_settings() -> Arc<Mutex<Tweak>> {
+pub fn high_performance_visual_settings() -> Tweak {
     Tweak::powershell(
         "High Performance Visual Settings".to_string(),
         "This tweak adjusts Windows visual settings to prioritize performance over appearance, including drastic changes to display settings. Here's what it does:
