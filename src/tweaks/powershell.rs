@@ -1,4 +1,4 @@
-// src/tweaks/powershell_tweaks.rs
+// src/tweaks/powershell.rs
 
 use std::process::Command;
 
@@ -41,7 +41,7 @@ impl PowershellTweak {
                 .output()
                 .map_err(|e| {
                     anyhow::Error::msg(format!(
-                        "{:?} -> Failed to execute PowerShell script '{:?}': {:?}",
+                        "{:?} -> Failed to execute PowerShell script '{}': {:?}",
                         id, script, e
                     ))
                 })?;
@@ -49,7 +49,7 @@ impl PowershellTweak {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 error!(
-                    "{:?} -> PowerShell script '{:?}' failed with error: {:?}",
+                    "{:?} -> PowerShell script '{}' failed with error: {}",
                     id,
                     script,
                     stderr.trim()
@@ -61,7 +61,7 @@ impl PowershellTweak {
                 )));
             }
             let stdout = String::from_utf8_lossy(&output.stdout);
-            debug!("{:?} -> PowerShell script output: {:?}", id, stdout.trim());
+            debug!("{:?} -> PowerShell script output: {}", id, stdout.trim());
             Ok(Some(stdout.trim().to_string()))
         } else {
             debug!(
@@ -89,7 +89,7 @@ impl TweakMethod for PowershellTweak {
                     // check if the target state string is contained in the current state
                     let is_enabled = current_state.contains(target_state);
                     debug!(
-                        "{:?} -> Current state: {:?}, Target state: {:?}, Enabled: {:?}",
+                        "{:?} -> Current state: '{}', Target state: '{}', Enabled: {}",
                         id, current_state, target_state, is_enabled
                     );
                     Ok(is_enabled)
@@ -118,7 +118,7 @@ impl TweakMethod for PowershellTweak {
         }
     }
 
-    /// Executes the `apply_script` to apply the tweak.
+    /// Executes the `apply_script` to apply the tweak synchronously.
     ///
     /// # Returns
     ///
@@ -126,9 +126,10 @@ impl TweakMethod for PowershellTweak {
     /// - `Err(anyhow::Error)` if the script execution fails.
     fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
         info!(
-            "{:?} -> Applying PowerShell tweak using script '{:?}'.",
+            "{:?} -> Applying PowerShell tweak using script '{}'.",
             id, &self.apply_script
         );
+
         let output = Command::new("powershell")
             .args([
                 "-NoProfile",
@@ -140,7 +141,7 @@ impl TweakMethod for PowershellTweak {
             .output()
             .map_err(|e| {
                 anyhow::Error::msg(format!(
-                    "{:?} -> Failed to execute PowerShell script '{:?}': {:?}",
+                    "{:?} -> Failed to execute PowerShell script '{}': {:?}",
                     id, &self.apply_script, e
                 ))
             })?;
@@ -150,7 +151,7 @@ impl TweakMethod for PowershellTweak {
 
         if output.status.success() {
             debug!(
-                "{:?} -> Apply script executed successfully. Output: {:?}",
+                "{:?} -> Apply script executed successfully. Output: {}",
                 id,
                 stdout.trim()
             );
@@ -170,7 +171,7 @@ impl TweakMethod for PowershellTweak {
         }
     }
 
-    /// Executes the `undo_script` to revert the tweak.
+    /// Executes the `undo_script` to revert the tweak synchronously.
     ///
     /// # Returns
     ///
@@ -179,9 +180,10 @@ impl TweakMethod for PowershellTweak {
     fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
         if let Some(script) = &self.undo_script {
             info!(
-                "{:?} -> Reverting PowerShell tweak using script '{:?}'.",
+                "{:?} -> Reverting PowerShell tweak using script '{}'.",
                 id, script
             );
+
             let output = Command::new("powershell")
                 .args([
                     "-NoProfile",
@@ -193,34 +195,41 @@ impl TweakMethod for PowershellTweak {
                 .output()
                 .map_err(|e| {
                     anyhow::Error::msg(format!(
-                        "{:?} -> Failed to execute PowerShell script '{:?}': {:?}",
+                        "{:?} -> Failed to execute PowerShell script '{}': {:?}",
                         id, script, e
                     ))
                 })?;
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if output.status.success() {
+                debug!(
+                    "{:?} -> Revert script executed successfully. Output: {}",
+                    id,
+                    stdout.trim()
+                );
+                Ok(())
+            } else {
                 error!(
                     "{:?} -> PowerShell script '{}' failed with error: {}",
                     id,
                     script,
                     stderr.trim()
                 );
-                return Err(anyhow::Error::msg(format!(
+                Err(anyhow::Error::msg(format!(
                     "PowerShell script '{}' failed with error: {}",
                     script,
                     stderr.trim()
-                )));
+                )))
             }
-
-            debug!("{:?} -> Revert script executed successfully.", id);
         } else {
             warn!(
                 "{:?} -> No undo script defined for PowerShell tweak. Skipping revert operation.",
                 id
             );
+            Ok(())
         }
-        Ok(())
     }
 }
 

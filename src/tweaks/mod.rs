@@ -16,6 +16,7 @@ use registry::RegistryTweak;
 use crate::widgets::TweakWidget;
 
 /// Represents a single tweak that can be applied to the system.
+#[derive(Clone)]
 pub struct Tweak {
     /// Display name of the tweak.
     pub name: String,

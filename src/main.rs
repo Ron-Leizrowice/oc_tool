@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use eframe::{egui, App, Frame, NativeOptions};
-use egui::{vec2, Button, FontId, RichText, Sense};
+use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
 use tracing::{error, info, span, trace, warn, Level};
@@ -39,7 +39,13 @@ const CONTAINER_INTERNAL_PADDING: f32 = 4.0;
 const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
 
 // Status Bar Padding
-const STATUS_BAR_PADDING: f32 = 10.0; // Padding inside the status bar
+const STATUS_BAR_PADDING: f32 = 5.0; // Padding inside the status bar
+
+// Default Button Dimensions
+const BUTTON_WIDTH: f32 = 40.0;
+const BUTTON_HEIGHT: f32 = 20.0;
+
+const BUTTON_DIMENSIONS: Vec2 = vec2(BUTTON_WIDTH, BUTTON_HEIGHT);
 
 const NUM_WORKERS: usize = 8;
 
@@ -124,7 +130,7 @@ impl MyApp {
                                     "{id:?} -> Tweak reverted successfully. Pending reboot cleared.",
                                 );
                             } else {
-                                info!("{id:?} -> Tweak reverted successfully. No reboot required.",);
+                                info!("{id:?} -> Tweak reverted successfully. No reboot required.");
                             }
                         } else {
                             tweak.set_status(TweakStatus::Failed(
@@ -257,36 +263,48 @@ impl MyApp {
                 ui.horizontal(|ui| {
                     // **Label Section**
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        if let Some(tweak) = self.tweaks.get(&tweak_id) {
+                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
                             ui.label(
-                                egui::RichText::new(&tweak.name)
+                                egui::RichText::new(&tweak_entry.name)
                                     .text_style(egui::TextStyle::Body)
                                     .strong(),
                             )
-                            .on_hover_text(&tweak.description);
+                            .on_hover_text(&tweak_entry.description);
                         }
                     });
 
                     // **Widget Section**
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
-                            match tweak.widget {
+                        // Acquire the lock briefly to get the tweak status and enabled state
+                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
+                            let tweak_status = tweak_entry.get_status();
+                            let is_enabled = tweak_entry.is_enabled();
+                            let widget_type = tweak_entry.widget.clone();
+                            // Release the lock
+                            drop(tweak_entry);
+
+                            match widget_type {
                                 TweakWidget::ToggleSwitch => {
                                     // Toggle Switch Widget
-                                    let mut is_enabled = tweak.is_enabled();
-                                    let response_toggle = ui.add(toggle_switch(&mut is_enabled));
+                                    let mut is_enabled_mut = is_enabled;
+                                    let response_toggle =
+                                        ui.add(toggle_switch(&mut is_enabled_mut));
 
                                     // Handle toggle interaction
                                     if response_toggle.changed() {
-                                        // Update the enabled state
-                                        tweak.set_enabled(is_enabled);
-
+                                        // Acquire mutable reference to tweak to set status
+                                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
+                                            // Update the tweak's enabled state
+                                            tweak.set_enabled(is_enabled_mut);
+                                            // Set the status to Applying
+                                            tweak.set_status(TweakStatus::Applying);
+                                        }
                                         // Dispatch the apply or revert task based on the new state
-                                        self.dispatch_task(tweak_id, is_enabled);
+                                        self.dispatch_task(tweak_id, is_enabled_mut);
                                     }
 
                                     // Handle error messages
-                                    if let TweakStatus::Failed(ref err) = tweak.get_status() {
+                                    if let TweakStatus::Failed(ref err) = tweak_status {
                                         ui.colored_label(
                                             egui::Color32::RED,
                                             format!("Error: {}", err),
@@ -294,44 +312,53 @@ impl MyApp {
                                     }
                                 }
                                 TweakWidget::ActionButton => {
-                                    // Apply Button Widget
-                                    let button_state = match tweak.get_status() {
-                                        TweakStatus::Idle => ButtonState::Default,
+                                    // Determine button state based on tweak_status
+                                    let button_state = match tweak_status {
+                                        TweakStatus::Idle | TweakStatus::Failed(_) => {
+                                            ButtonState::Default
+                                        }
                                         TweakStatus::Applying => ButtonState::InProgress,
-                                        TweakStatus::Failed(_) => ButtonState::Default, // Reset to Default on failure
                                     };
 
-                                    // Create a mutable reference to the button state
+                                    // Create a mutable variable for the button state (since the widget expects &mut)
                                     let mut button_state_mut = button_state;
 
-                                    // Add the ApplyButton widget
+                                    // Add the action button widget
                                     let response_button =
                                         ui.add(action_button(&mut button_state_mut));
 
-                                    // If the button was clicked and is not in progress
+                                    // Handle button click
                                     if response_button.clicked()
-                                        && tweak.get_status() != TweakStatus::Applying
+                                        && button_state == ButtonState::Default
                                     {
-                                        // Update the tweak's status to Applying
-                                        tweak.set_status(TweakStatus::Applying);
-
+                                        // Acquire mutable reference to the tweak to set status to Applying
+                                        if let Some(mut tweak) = self.tweaks.get_mut(&tweak_id) {
+                                            tweak.set_status(TweakStatus::Applying);
+                                        }
                                         // Dispatch the apply task
                                         self.dispatch_task(tweak_id, true);
                                     }
 
                                     // Handle error messages
-                                    if let TweakStatus::Failed(ref err) = tweak.get_status() {
+                                    if let TweakStatus::Failed(ref err) = tweak_status {
                                         ui.colored_label(
                                             egui::Color32::RED,
                                             format!("Error: {}", err),
                                         );
                                     }
-                                } // Handle other widget types here
+                                }
                             }
                         }
                     });
                 });
             });
+    }
+
+    /// Checks if any tweaks are currently in the Applying state.
+    fn any_tweaks_applying(&self) -> bool {
+        self.tweaks
+            .iter()
+            .any(|tweak_entry| matches!(tweak_entry.value().get_status(), TweakStatus::Applying))
     }
 
     /// Renders the status bar at the bottom with divisions.
@@ -353,14 +380,14 @@ impl MyApp {
                         pending_reboot_count,
                         if pending_reboot_count != 1 { "s" } else { "" }
                     ))
-                    .font(FontId::proportional(16.0)),
+                    .font(FontId::proportional(14.0)),
                 );
 
                 // If there are pending reboots, show a reboot button
                 if pending_reboot_count > 0 {
                     ui.separator(); // Vertical separator
                     if ui
-                        .add(Button::new("Restart Windows").min_size(vec2(40.0, 30.0)))
+                        .add(Button::new("Restart Windows").min_size(BUTTON_DIMENSIONS))
                         .clicked()
                     {
                         // Show confirmation dialog
@@ -388,7 +415,7 @@ impl MyApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // **Reboot into BIOS Button**
                     if ui
-                        .add(Button::new("Reboot into BIOS").min_size(vec2(40.0, 30.0)))
+                        .add(Button::new("Reboot into BIOS").min_size(BUTTON_DIMENSIONS))
                         .clicked()
                     {
                         match reboot_into_bios() {
@@ -408,7 +435,7 @@ impl MyApp {
                     };
 
                     if ui
-                        .add(Button::new(slow_mode_label).min_size(vec2(40.0, 30.0)))
+                        .add(Button::new(slow_mode_label).min_size(BUTTON_DIMENSIONS))
                         .on_hover_text(SLOW_MODE_DESCRIPTION)
                         .clicked()
                     {
@@ -460,17 +487,25 @@ impl App for MyApp {
 
         // Render the status bar
         self.draw_status_bar(ctx);
+
+        // **Request repaint if any tweaks are in the Applying state**
+        if self.any_tweaks_applying() {
+            // Request a repaint to ensure update() is called again
+            ctx.request_repaint();
+        }
     }
 
     /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Disable low res mode
         self.dispatch_task(TweakId::LowResMode, false);
-        // disable slow mode
-        self.disable_slow_mode().unwrap();
+        // Disable slow mode
+        if let Err(e) = self.disable_slow_mode() {
+            error!("Failed to disable slow mode during exit: {:?}", e);
+        }
 
-        // close the worker pool
-        self.worker_pool.shutdown(NUM_WORKERS);
+        // Close the worker pool
+        self.worker_pool.shutdown();
     }
 }
 
