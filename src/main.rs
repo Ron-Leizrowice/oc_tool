@@ -5,14 +5,17 @@ mod utils;
 mod widgets;
 mod worker;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
 use tracing::{error, info, span, trace, warn, Level};
-use tweaks::{tweak_list, Tweak, TweakCategory, TweakId, TweakStatus};
+use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
     button::{action_button, ButtonState},
@@ -20,7 +23,7 @@ use widgets::{
     TweakWidget,
 };
 
-use crate::worker::{Task, WorkerPool, WorkerResult};
+use crate::worker::{WorkerPool, WorkerResult, WorkerTask};
 
 // Constants for layout and spacing
 const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
@@ -40,9 +43,11 @@ const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
 // Status Bar Padding
 const STATUS_BAR_PADDING: f32 = 10.0; // Padding inside the status bar
 
+const NUM_WORKERS: usize = 8;
+
 /// Represents your application's main structure.
 pub struct MyApp {
-    pub tweaks: Vec<Arc<Mutex<Tweak>>>,
+    pub tweaks: HashMap<TweakId, Arc<Mutex<Tweak>>>,
     pub worker_pool: WorkerPool,
 
     // Power management fields
@@ -57,24 +62,18 @@ impl MyApp {
         let app_span = span!(Level::INFO, "App Initialization");
         let _app_guard = app_span.enter();
 
-        info!("Initializing Overclocking Assistant application");
-
         // Initialize tweaks
-        info!("Initializing tweaks...");
-        let tweaks = tweak_list();
+        let tweaks = tweaks::all();
 
         // Initialize worker pool
-        info!("Initializing {} workers...", num_cpus::get());
-        let worker_pool = WorkerPool::new(num_cpus::get());
+        let worker_pool = WorkerPool::new(NUM_WORKERS);
 
         // Initialize the current state of all tweaks
-        info!("Checking initial state of all tweaks");
-
-        // Iterate over all tweaks by reference to avoid moving
-        for tweak in &tweaks {
+        for (id, tweak) in &tweaks {
             worker_pool
-                .send_task(Task::ReadInitialState {
-                    tweak: tweak.clone(),
+                .send_task(WorkerTask::ReadInitialState {
+                    id: *id,
+                    tweak: Arc::clone(tweak),
                 })
                 .expect("Failed to send ReadInitialState task to worker pool");
         }
@@ -89,7 +88,7 @@ impl MyApp {
 
     fn count_tweaks_pending_reboot(&self) -> usize {
         self.tweaks
-            .iter()
+            .values()
             .filter(|tweak| *tweak.lock().unwrap().pending_reboot.lock().unwrap())
             .count()
     }
@@ -99,38 +98,29 @@ impl MyApp {
         while let Some(result) = self.worker_pool.try_recv_result() {
             match result {
                 WorkerResult::TweakApplied { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
+                    if let Some(tweak) = self.tweaks.get(&id) {
                         let tweak_guard = tweak.lock().unwrap();
                         if success {
                             tweak_guard.set_status(TweakStatus::Idle);
 
                             if tweak_guard.requires_reboot {
                                 tweak_guard.pending_reboot();
-                                info!(
-                                    "{:?} -> Tweak applied successfully. Pending reboot.",
-                                    tweak_guard.id
-                                );
+                                info!("{id:?} -> Tweak applied successfully. Pending reboot.");
                             } else {
-                                info!(
-                                    "{:?} -> Tweak applied successfully. No reboot required.",
-                                    tweak_guard.id
-                                );
+                                info!("{id:?} -> Tweak applied successfully. No reboot required.");
                             }
                         } else {
                             tweak_guard.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
-                            warn!(
-                                "{:?} -> Tweak application failed: {:?}",
-                                tweak_guard.id, tweak_guard.status
-                            );
+                            warn!("{id:?} -> Tweak apply failed: {:?}", tweak_guard.status);
                         }
                     } else {
-                        warn!("Received result for unknown tweak: {:?}", id);
+                        warn!("Received result for unknown tweak: {id:?}");
                     }
                 }
                 WorkerResult::TweakReverted { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
+                    if let Some(tweak) = self.tweaks.get(&id) {
                         let tweak_guard = tweak.lock().unwrap();
                         if success {
                             tweak_guard.set_status(TweakStatus::Idle);
@@ -138,36 +128,29 @@ impl MyApp {
                             if tweak_guard.requires_reboot {
                                 tweak_guard.cancel_pending_reboot();
                                 info!(
-                                    "{:?} -> Tweak reverted successfully. Pending reboot cleared.",
-                                    tweak_guard.id
+                                    "{id:?} -> Tweak reverted successfully. Pending reboot cleared.",
+
                                 );
                             } else {
-                                info!(
-                                    "{:?} -> Tweak reverted successfully. No reboot required.",
-                                    tweak_guard.id
-                                );
+                                info!("{id:?} -> Tweak reverted successfully. No reboot required.",);
                             }
                         } else {
                             tweak_guard.set_status(TweakStatus::Failed(
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
-                            warn!(
-                                "{:?} -> Tweak reversion failed: {:?}",
-                                tweak_guard.id, tweak_guard.status
-                            );
+                            warn!("{id:?} -> Tweak reversion failed: {:?}", tweak_guard.status);
                         }
                     } else {
-                        warn!("Received result for unknown tweak: {:?}", id);
+                        warn!("Received result for unknown tweak: {id:?}");
                     }
                 }
                 WorkerResult::InitialStateRead { id, success, error } => {
-                    if let Some(tweak) = self.tweaks.iter().find(|t| t.lock().unwrap().id == id) {
+                    if let Some(tweak) = self.tweaks.get(&id) {
                         let tweak_guard = tweak.lock().unwrap();
                         if success {
                             tweak_guard.set_status(TweakStatus::Idle);
                             info!(
-                                "{:?} -> Initial state read successfully. Enabled: {}",
-                                tweak_guard.id,
+                                "{id:?} -> Initial state read successfully. Enabled: {}",
                                 *tweak_guard.enabled.lock().unwrap()
                             );
                         } else {
@@ -175,15 +158,12 @@ impl MyApp {
                                 error.unwrap_or_else(|| "Unknown error".to_string()),
                             ));
                             warn!(
-                                "{:?} -> Failed to read initial state: {:?}",
-                                tweak_guard.id, tweak_guard.status
+                                "{id:?} -> Failed to read initial state: {:?}",
+                                tweak_guard.status
                             );
                         }
                     } else {
-                        warn!(
-                            "Received InitialStateRead result for unknown tweak: {:?}",
-                            id
-                        );
+                        warn!("Received InitialStateRead result for unknown tweak: {id:?}");
                     }
                 }
                 WorkerResult::ShutdownComplete => {
@@ -194,14 +174,16 @@ impl MyApp {
     }
 
     /// Dispatches a task to apply or revert a tweak based on user interaction.
-    fn dispatch_task(&self, tweak: &Arc<Mutex<Tweak>>, apply: bool) {
+    fn dispatch_task(&self, id: TweakId, apply: bool) {
         let task = if apply {
-            Task::ApplyTweak {
-                tweak: tweak.clone(),
+            WorkerTask::ApplyTweak {
+                id,
+                tweak: Arc::clone(self.tweaks.get(&id).unwrap()),
             }
         } else {
-            Task::RevertTweak {
-                tweak: tweak.clone(),
+            WorkerTask::RevertTweak {
+                id,
+                tweak: Arc::clone(self.tweaks.get(&id).unwrap()),
             }
         };
 
@@ -236,14 +218,16 @@ impl MyApp {
     /// Helper method to draw a single category section
     fn draw_category_section(&self, ui: &mut egui::Ui, category: TweakCategory) {
         // Filter tweaks belonging to the current category
-        let category_tweaks: Vec<Arc<Mutex<Tweak>>> = self
+        let category_tweaks: Vec<TweakId> = self
             .tweaks
             .iter()
-            .filter(|tweak| {
-                let tweak_guard = tweak.lock().unwrap();
-                tweak_guard.category == category
+            .filter_map(|(id, tweak)| {
+                if tweak.lock().unwrap().category == category {
+                    Some(*id)
+                } else {
+                    None
+                }
             })
-            .cloned()
             .collect();
 
         if category_tweaks.is_empty() {
@@ -256,15 +240,15 @@ impl MyApp {
         ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
 
         // Iterate over each tweak and draw using the tweak container
-        for tweak in &category_tweaks {
-            self.draw_tweak_container(ui, tweak.clone());
+        for tweak_id in category_tweaks {
+            self.draw_tweak_container(ui, tweak_id);
             ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
         }
 
         ui.add_space(CONTAINER_VERTICAL_PADDING * 2.0); // Add some vertical spacing between categories
     }
 
-    fn draw_tweak_container(&self, ui: &mut egui::Ui, tweak: Arc<Mutex<Tweak>>) {
+    fn draw_tweak_container(&self, ui: &mut egui::Ui, tweak_id: TweakId) {
         // Define the desired size for the tweak container
         let desired_size = egui::vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
 
@@ -288,7 +272,7 @@ impl MyApp {
                 ui.horizontal(|ui| {
                     // **Label Section**
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let tweak_guard = tweak.lock().unwrap();
+                        let tweak_guard = self.tweaks.get(&tweak_id).unwrap().lock().unwrap();
                         ui.label(
                             egui::RichText::new(&tweak_guard.name)
                                 .text_style(egui::TextStyle::Body)
@@ -299,7 +283,7 @@ impl MyApp {
 
                     // **Widget Section**
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let tweak_guard = tweak.lock().unwrap();
+                        let tweak_guard = self.tweaks.get(&tweak_id).unwrap().lock().unwrap();
                         match tweak_guard.widget {
                             TweakWidget::ToggleSwitch => {
                                 // Toggle Switch Widget
@@ -315,7 +299,7 @@ impl MyApp {
                                     }
 
                                     // Dispatch the apply or revert task based on the new state
-                                    self.dispatch_task(&tweak, is_enabled);
+                                    self.dispatch_task(tweak_id, is_enabled);
                                 }
 
                                 // Handle error messages
@@ -348,7 +332,7 @@ impl MyApp {
                                     }
 
                                     // Dispatch the apply task
-                                    self.dispatch_task(&tweak, true);
+                                    self.dispatch_task(tweak_id, true);
                                 }
 
                                 // Handle error messages
@@ -493,20 +477,12 @@ impl App for MyApp {
     /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Disable low res mode
-        self.dispatch_task(
-            &self
-                .tweaks
-                .iter()
-                .find(|tweak| tweak.lock().unwrap().id == TweakId::LowResMode)
-                .unwrap()
-                .clone(),
-            false,
-        );
+        self.dispatch_task(TweakId::LowResMode, false);
         // disable slow mode
         self.disable_slow_mode().unwrap();
 
         // close the worker pool
-        self.worker_pool.shutdown(num_cpus::get());
+        self.worker_pool.shutdown(NUM_WORKERS);
     }
 }
 

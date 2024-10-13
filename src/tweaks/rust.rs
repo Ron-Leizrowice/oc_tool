@@ -66,7 +66,6 @@ impl TweakMethod for LowResMode {
 /// Function to create the `Low Resolution Mode` Rust tweak.
 pub fn low_res_mode() -> Arc<Mutex<Tweak>> {
     Tweak::rust(
-        TweakId::LowResMode,
         "Low Resolution Mode".to_string(),
         "Sets the display to a lower resolution to conserve resources or improve performance."
             .to_string(),

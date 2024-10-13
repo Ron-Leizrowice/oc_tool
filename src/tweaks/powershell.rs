@@ -9,21 +9,21 @@ use tracing::{debug, error, info, warn};
 
 use super::{method::TweakMethod, Tweak, TweakCategory, TweakId};
 
-
 /// Represents a PowerShell-based tweak, including scripts to read, apply, and undo the tweak.
 #[derive(Clone, Debug)]
 pub struct PowershellTweak {
     /// PowerShell script to read the current state of the tweak.
     pub read_script: Option<String>,
     /// PowerShell script to apply the tweak.
-    pub apply_script: Option<String>,
+    pub apply_script: String,
     /// PowerShell script to undo the tweak.
     pub undo_script: Option<String>,
     /// The target state of the tweak (e.g., the expected output of the read script when the tweak is enabled).
     pub target_state: Option<String>,
 }
 
-impl PowershellTweak {/// Reads the current state of the tweak by executing the `read_script`.
+impl PowershellTweak {
+    /// Reads the current state of the tweak by executing the `read_script`.
     ///
     /// # Returns
     ///
@@ -73,7 +73,8 @@ impl PowershellTweak {/// Reads the current state of the tweak by executing the 
             );
             Ok(None)
         }
-    }}
+    }
+}
 
 impl TweakMethod for PowershellTweak {
     /// Checks if the tweak is currently enabled by comparing the current value to the default value.
@@ -120,8 +121,6 @@ impl TweakMethod for PowershellTweak {
         }
     }
 
-    
-
     /// Executes the `apply_script` to apply the tweak.
     ///
     /// # Returns
@@ -129,59 +128,48 @@ impl TweakMethod for PowershellTweak {
     /// - `Ok(())` if the script executes successfully.
     /// - `Err(anyhow::Error)` if the script execution fails.
     fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        match &self.apply_script {
-            Some(script) => {
-                info!(
-                    "{:?} -> Applying PowerShell tweak using script '{:?}'.",
-                    id, script
-                );
-                let output = Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        script,
-                    ])
-                    .output()
-                    .map_err(|e| {
-                        anyhow::Error::msg(format!(
-                            "{:?} -> Failed to execute PowerShell script '{:?}': {:?}",
-                            id, script, e
-                        ))
-                    })?;
+        info!(
+            "{:?} -> Applying PowerShell tweak using script '{:?}'.",
+            id, &self.apply_script
+        );
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &self.apply_script,
+            ])
+            .output()
+            .map_err(|e| {
+                anyhow::Error::msg(format!(
+                    "{:?} -> Failed to execute PowerShell script '{:?}': {:?}",
+                    id, &self.apply_script, e
+                ))
+            })?;
 
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
-                if output.status.success() {
-                    debug!(
-                        "{:?} -> Apply script executed successfully. Output: {:?}",
-                        id,
-                        stdout.trim()
-                    );
-                    Ok(())
-                } else {
-                    error!(
-                        "{:?} -> PowerShell script '{}' failed with error: {}",
-                        id,
-                        script,
-                        stderr.trim()
-                    );
-                    Err(anyhow::Error::msg(format!(
-                        "PowerShell script '{}' failed with error: {}",
-                        script,
-                        stderr.trim()
-                    )))
-                }
-            }
-            None => {
-                warn!(
-                    "{:?} -> No apply script defined for PowerShell tweak. Skipping apply operation.",
-                    id
-                );
-                Ok(())
-            }
+        if output.status.success() {
+            debug!(
+                "{:?} -> Apply script executed successfully. Output: {:?}",
+                id,
+                stdout.trim()
+            );
+            Ok(())
+        } else {
+            error!(
+                "{:?} -> PowerShell script '{}' failed with error: {}",
+                id,
+                &self.apply_script,
+                stderr.trim()
+            );
+            Err(anyhow::Error::msg(format!(
+                "PowerShell script '{}' failed with error: {}",
+                &self.apply_script,
+                stderr.trim()
+            )))
         }
     }
 
@@ -241,13 +229,12 @@ impl TweakMethod for PowershellTweak {
 
 pub fn process_idle_tasks() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::ProcessIdleTasks,
         "Process Idle Tasks".to_string(),
         "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.".to_string(),
         TweakCategory::Action,
         PowershellTweak {
             read_script: None,
-            apply_script: Some("Rundll32.exe advapi32.dll,ProcessIdleTasks".to_string()),
+            apply_script: "Rundll32.exe advapi32.dll,ProcessIdleTasks".to_string(),
             undo_script: None,
             target_state: None,
         },
@@ -257,7 +244,6 @@ pub fn process_idle_tasks() -> Arc<Mutex<Tweak>> {
 
 pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::UltimatePerformancePlan,
         "Enable Ultimate Performance Plan".to_string(),
         "Activates the Ultimate Performance power plan, which is tailored for demanding workloads by minimizing micro-latencies and boosting hardware performance. It disables power-saving features like core parking, hard disk sleep, and processor throttling, ensuring CPU cores run at maximum frequency. This plan also keeps I/O devices and PCIe links at full power, prioritizing performance over energy efficiency. It’s designed to reduce the delays introduced by energy-saving policies, improving responsiveness in tasks that require consistent, high-throughput system resources..".to_string(),
         TweakCategory::Power,
@@ -265,7 +251,7 @@ pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
             read_script: Some(
                 "powercfg /GETACTIVESCHEME".to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
                 $ultimatePlans = powercfg /L | Select-String '(Ultimate Performance)' | ForEach-Object { $_.Line }
@@ -274,8 +260,8 @@ pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
                 powercfg /SETACTIVE $ultimatePlans[-1]
                 "#
                 .trim()
-                .to_string(),
-            ),
+                .to_string()
+            ,
             undo_script: Some(
                 r#"
                 $balancedPlan = powercfg /L | Select-String '(Balanced)' | ForEach-Object { $_.Line }
@@ -291,13 +277,12 @@ pub fn enable_ultimate_performance_plan() -> Arc<Mutex<Tweak>> {
             target_state: Some("(Ultimate Performance)".trim().to_string()),
         },
         false, // requires reboot
-        
+
     )
 }
 
 pub fn additional_kernel_worker_threads() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::AdditionalKernelWorkerThreads,
         "Additional Worker Threads".to_string(),
         "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.".to_string(),
         TweakCategory::Kernel,
@@ -310,15 +295,15 @@ pub fn additional_kernel_worker_threads() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 $additionalThreads = (Get-WmiObject -Class Win32_Processor).NumberOfLogicalProcessors
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Executive" -Name AdditionalCriticalWorkerThreads -Value $additionalThreads
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Executive" -Name AdditionalDelayedWorkerThreads -Value $additionalThreads
                 "#
                 .trim()
-                .to_string(),
-            ),
+                .to_string()
+            ,
             undo_script: Some(
                 r#"
                 Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Executive" -Name AdditionalCriticalWorkerThreads
@@ -330,26 +315,28 @@ pub fn additional_kernel_worker_threads() -> Arc<Mutex<Tweak>> {
             target_state: None,
         },
         false,
-        
+
     )
 }
 
 pub fn disable_hpet() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableHPET,
         "Disable Dynamic Tick".to_string(),
         "Disables the dynamic tick feature, which normally reduces timer interrupts during idle periods to conserve power. By disabling dynamic tick, the system maintains a constant rate of timer interrupts, improving performance in real-time applications by reducing latency and jitter. This tweak is useful in scenarios where consistent, low-latency processing is required, but it may increase power consumption as the CPU will not enter low-power states as frequently.".to_string(),
         TweakCategory::System,
         PowershellTweak {
             read_script: Some(r#"(bcdedit /enum | Select-String "useplatformclock").ToString().Trim()"#.to_string()),
-            apply_script: Some(r#"
+
+            apply_script: r#"
             bcdedit /deletevalue useplatformclock
             bcdedit /set disabledynamictick yes
-            "#.trim().to_string()),
+            "#.trim().to_string(),
+
             undo_script: Some(r#"
             bcdedit /set useplatformclock true
             bcdedit /set disabledynamictick no
             "#.trim().to_string()),
+
             target_state: Some("useplatformclock        Yes".trim().to_string()),
         },
         true,
@@ -358,7 +345,6 @@ pub fn disable_hpet() -> Arc<Mutex<Tweak>> {
 
 pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::AggressiveDpcHandling,
         "Aggressive DPC Handling".to_string(),
         "This tweak modifies kernel-level settings in the Windows Registry to aggressively optimize the handling of Deferred Procedure Calls (DPCs) by disabling timeouts, watchdogs, and minimizing queue depth, aiming to enhance system responsiveness and reduce latency. However, it also removes safeguards that monitor and control long-running DPCs, which could lead to system instability or crashes in certain scenarios, particularly during high-performance or overclocking operations.".to_string(),
         TweakCategory::Kernel,
@@ -391,8 +377,7 @@ pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
-                r#"
+            apply_script: r#"
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name DpcWatchdogProfileOffset -Value 0
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name DpcTimeout -Value 0
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name IdealDpcRate -Value 1
@@ -402,7 +387,6 @@ pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
                 "#
                 .trim()
                 .to_string(),
-            ),
             undo_script: Some(
                 r#"
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" -Name DpcWatchdogProfileOffset -Value 10000
@@ -418,13 +402,12 @@ pub fn aggressive_dpc_handling() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         false,
-        
+
     )
 }
 
 pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::EnhancedKernelPerformance,
         "Enhanced Kernel Performance".to_string(),
         "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
         TweakCategory::Kernel,
@@ -475,7 +458,7 @@ pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
                 try {
@@ -499,8 +482,8 @@ pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
                 }
                 "#
                 .trim()
-                .to_string(),
-            ),
+                .to_string()
+            ,
             undo_script: Some(
                 r#"
                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
@@ -530,13 +513,12 @@ pub fn enhanced_kernel_performance() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         false,
-        
+
     )
 }
 
 pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableRamCompression,
         "Disable RAM Compression".to_string(),
         "Disables the RAM compression feature in Windows to potentially improve system performance by reducing CPU overhead. This may lead to higher memory usage.".to_string(),
         TweakCategory::Memory,
@@ -553,7 +535,7 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 try {
                     Disable-MMAgent -MemoryCompression
@@ -564,7 +546,6 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
                 "#
                 .trim()
                 .to_string(),
-            ),
             undo_script: Some(
                 r#"
                 try {
@@ -580,13 +561,12 @@ pub fn disable_ram_compression() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
+
     )
 }
 
 pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableLocalFirewall,
         "Disable Local Firewall".to_string(),
         "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.".to_string(),
         TweakCategory::Security,
@@ -594,7 +574,7 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
             read_script: Some(
                 r#"
                 $firewallState = netsh advfirewall show allprofiles state | Select-String "State" | ForEach-Object { $_.Line }
-                
+
                 if ($firewallState -match "off") {
                     "Enabled"
                 } else {
@@ -604,7 +584,7 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 try {
                     netsh advfirewall set allprofiles state off
@@ -615,7 +595,6 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
                 "#
                 .trim()
                 .to_string(),
-            ),
             undo_script: Some(
                 r#"
                 try {
@@ -631,13 +610,12 @@ pub fn disable_local_firewall() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
+
     )
 }
 
 pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableSuccessAuditing,
         "Disable Success Auditing".to_string(),
         "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.".to_string(),
         TweakCategory::Security,
@@ -645,7 +623,7 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
             read_script: Some(
                 r#"
                 $auditSettings = (AuditPol /get /category:* /success).Contains("Success Disable")
-                
+
                 if ($auditSettings) {
                     "Enabled"
                 } else {
@@ -655,7 +633,7 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
+            apply_script:
                 r#"
                 try {
                     Auditpol /set /category:* /Success:disable
@@ -666,7 +644,7 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
                 "#
                 .trim()
                 .to_string(),
-            ),
+
             undo_script: Some(
                 r#"
                 try {
@@ -682,13 +660,12 @@ pub fn disable_success_auditing() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
+
     )
 }
 
 pub fn disable_pagefile() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisablePagefile,
         "Disable Pagefile".to_string(),
         "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.".to_string(),
         TweakCategory::Memory,
@@ -703,25 +680,22 @@ pub fn disable_pagefile() -> Arc<Mutex<Tweak>> {
                     "Disabled"
                 }
                 "#
-              
+
                 .to_string(),
             ),
-            apply_script: Some(
-                "fsutil behavior set encryptpagingfile 0".to_string(),
-            ),
+            apply_script:"fsutil behavior set encryptpagingfile 0".to_string(),
             undo_script: Some(
                "fsutil behavior set encryptpagingfile 1".to_string(),
             ),
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
+
     )
 }
 
 pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableSpeculativeExecutionMitigations,
         "Disable Speculative Execution Mitigations".to_string(),
         "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
         TweakCategory::Security,
@@ -740,14 +714,12 @@ pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
-                r#"
+            apply_script: r#"
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -Value 3
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverrideMask -Value 3
                 "#
                 .trim()
                 .to_string(),
-            ),
             undo_script: Some(
                 r#"
                 Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -ErrorAction SilentlyContinue
@@ -759,13 +731,12 @@ pub fn disable_speculative_execution_mitigations() -> Arc<Mutex<Tweak>> {
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
+
     )
 }
 
 pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableDataExecutionPrevention,
         "Disable Data Execution Prevention".to_string(),
         "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.".to_string(),
         TweakCategory::Security,
@@ -773,7 +744,7 @@ pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
             read_script: Some(
                 r#"
                 $depSettings = bcdedit /enum | Select-String 'nx'
-                
+
                 if ($depSettings -match 'AlwaysOff') {
                     "Enabled"
                 } else {
@@ -783,22 +754,18 @@ pub fn disable_data_execution_prevention() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
-                "bcdedit /set {current} nx AlwaysOff".to_string(),
-            ),
+            apply_script: "bcdedit /set {current} nx AlwaysOff".to_string(),
             undo_script: Some(
                 "bcdedit /set {current} nx OptIn".to_string(),
             ),
             target_state: Some("Enabled".to_string()),
         },
         true,
-        
     )
 }
 
 pub fn disable_process_idle_states() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::DisableProcessIdleStates,
         "Disable Process Idle States".to_string(),
         "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.".to_string(),
         TweakCategory::Power,
@@ -829,12 +796,10 @@ pub fn disable_process_idle_states() -> Arc<Mutex<Tweak>> {
                 .trim()
                 .to_string(),
             ),
-            apply_script: Some(
-                r#"
+            apply_script: r#"
                 powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR IdleDisable 1
                 powercfg /setactive SCHEME_CURRENT
                 "#.to_string(),
-            ),
             undo_script: Some(
                 r#"
                 powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR IdleDisable 0
@@ -844,7 +809,6 @@ pub fn disable_process_idle_states() -> Arc<Mutex<Tweak>> {
             target_state: Some("0x00000001".to_string()),
         },
         false,
-        
     )
 }
 
@@ -1002,22 +966,20 @@ pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
     )"#;
 
     Tweak::powershell(
-        TweakId::KillAllNonCriticalServices,
         "Kill All Non-Critical Services".to_string(),
         "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.".to_string(),
         TweakCategory::Action,
         PowershellTweak {
             read_script: None,
- 
-                apply_script: Some(format!(r#"
+                apply_script: format!(r#"
                     $servicePatterns = {}
-    
+
                     $allServices = Get-Service
                     $failedServices = @()
-    
+
                     foreach ($pattern in $servicePatterns) {{
                         $matchingServices = $allServices | Where-Object {{ $_.Name -like "*$pattern*" -or $_.DisplayName -like "*$pattern*" }}
-                        
+
                         foreach ($service in $matchingServices) {{
                             for ($i = 1; $i -le 5; $i++) {{
                                 if ($service.Status -ne 'Stopped') {{
@@ -1039,7 +1001,7 @@ pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
                             }}
                         }}
                     }}
-    
+
                     if ($failedServices.Count -gt 0) {{
                         Write-Output "The following services failed to be stopped after 5 attempts:"
                         foreach ($failedService in $failedServices) {{
@@ -1048,18 +1010,15 @@ pub fn kill_all_non_critical_services() -> Arc<Mutex<Tweak>> {
                     }} else {{
                         Write-Output "All specified non-critical services have been successfully stopped."
                     }}
-                    "#, services)),
+                    "#, services),
             undo_script: None,  target_state: None,
         },
         false,
-        
     )
 }
 
-
 pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::KillExplorer,
         "Kill Explorer".to_string(),
         "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.".to_string(),
         TweakCategory::Action,
@@ -1083,9 +1042,9 @@ pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
 
                 return $status | ConvertTo-Json
             "#.to_string()),
-            apply_script: Some(r#"
+            apply_script: r#"
                 Write-Output "Terminating Explorer process and preventing restart..."
-                
+
                 # Kill all Explorer processes
                 taskkill /F /IM explorer.exe
 
@@ -1093,7 +1052,7 @@ pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
                 New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoRestartShell" -Value 0 -PropertyType DWORD -Force
 
                 Write-Output "Explorer has been terminated and prevented from restarting."
-            "#.to_string()),
+            "#.to_string(),
             undo_script: Some(r#"
                 Write-Output "Allowing Explorer to restart and starting it..."
 
@@ -1116,10 +1075,8 @@ pub fn kill_explorer() -> Arc<Mutex<Tweak>> {
     )
 }
 
-
 pub fn high_performance_visual_settings() -> Arc<Mutex<Tweak>> {
     Tweak::powershell(
-        TweakId::HighPerformanceVisualSettings,
         "High Performance Visual Settings".to_string(),
         "This tweak adjusts Windows visual settings to prioritize performance over appearance, including drastic changes to display settings. Here's what it does:
 
@@ -1157,7 +1114,7 @@ pub fn high_performance_visual_settings() -> Arc<Mutex<Tweak>> {
 
                 return $status | ConvertTo-Json
             "#.to_string()),
-            apply_script: Some(r#"
+            apply_script: r#"
                 # Set visual effects to best performance
                 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -Value 2
 
@@ -1240,7 +1197,7 @@ pub fn high_performance_visual_settings() -> Arc<Mutex<Tweak>> {
                 } else {
                     Write-Output "Failed to change display settings."
                 }
-            "#.to_string()),
+            "#.to_string(),
             undo_script: Some(r#"
                 # Reset visual effects to system defaults
                 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -Value 0

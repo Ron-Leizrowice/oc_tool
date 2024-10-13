@@ -97,9 +97,7 @@ impl RegistryTweak {
         // Depending on the expected type, read the value
         match &self.tweak_value {
             RegistryKeyValue::Dword(_) => {
-                let val: u32 = subkey
-                    .get_value(&self.key)
-                    .map_err(anyhow::Error::from)?;
+                let val: u32 = subkey.get_value(&self.key).map_err(anyhow::Error::from)?;
                 tracing::debug!("{:?} -> Read DWORD value '{}' = {}.", id, self.key, val);
                 Ok(RegistryKeyValue::Dword(val))
             }
@@ -398,7 +396,6 @@ impl TweakMethod for RegistryTweak {
 
 pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::LargeSystemCache,
         "Large System Cache".to_string(),
         "Optimizes system memory management by adjusting the LargeSystemCache setting."
             .to_string(),
@@ -418,7 +415,6 @@ pub fn enable_large_system_cache() -> Arc<Mutex<Tweak>> {
 
 pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::SystemResponsiveness,
         "System Responsiveness".to_string(),
         "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
             .to_string(),
@@ -438,7 +434,6 @@ pub fn system_responsiveness() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableHWAcceleration,
         "Disable Hardware Acceleration".to_string(),
         "Disables hardware acceleration for the current user.".to_string(),
         TweakCategory::Graphics,
@@ -456,7 +451,6 @@ pub fn disable_hw_acceleration() -> Arc<Mutex<Tweak>> {
 
 pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::Win32PrioritySeparation,
         "Win32PrioritySeparation".to_string(),
         "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
             .to_string(),
@@ -475,7 +469,6 @@ pub fn win32_priority_separation() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableCoreParking,
         "Disable Core Parking".to_string(),
         "Disables core parking to improve system performance.".to_string(),
         TweakCategory::Power,
@@ -493,7 +486,6 @@ pub fn disable_core_parking() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_low_disk_space_checks() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::NoLowDiskSpaceChecks,
         "Disable Low Disk Space Checks".to_string(),
         "Disables low disk space checks to prevent notifications.".to_string(),
         TweakCategory::Storage,
@@ -511,7 +503,6 @@ pub fn disable_low_disk_space_checks() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_ntfs_tunnelling() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableNtfsTunnelling,
         "Disable NTFS Tunnelling".to_string(),
         "Disables NTFS tunnelling to improve file system performance.".to_string(),
         TweakCategory::Storage,
@@ -529,7 +520,6 @@ pub fn disable_ntfs_tunnelling() -> Arc<Mutex<Tweak>> {
 
 pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DistributeTimers,
         "Distribute Timers".to_string(),
         "Enables timer distribution across all cores.".to_string(),
         TweakCategory::System,
@@ -548,7 +538,6 @@ pub fn distribute_timers() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_windows_error_reporting() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableWindowsErrorReporting,
         "Disable Windows Error Reporting".to_string(),
         "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.".to_string(),
         TweakCategory::Telemetry,
@@ -566,7 +555,6 @@ pub fn disable_windows_error_reporting() -> Arc<Mutex<Tweak>> {
 
 pub fn dont_verify_random_drivers() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DontVerifyRandomDrivers,
         "Don't Verify Random Drivers".to_string(),
         "Disables random driver verification to improve system performance.".to_string(),
         TweakCategory::System,
@@ -584,7 +572,6 @@ pub fn dont_verify_random_drivers() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_driver_paging() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableDriverPaging,
         "Disable Driver Paging".to_string(),
         "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
         TweakCategory::Memory,
@@ -604,7 +591,6 @@ pub fn disable_driver_paging() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_prefetcher() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisablePrefetcher,
         "Disable Prefetcher".to_string(),
         "Disables the Prefetcher service to improve system performance.".to_string(),
         TweakCategory::Memory,
@@ -622,7 +608,6 @@ pub fn disable_prefetcher() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_application_telemetry() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableApplicationTelemetry,
         "Disable Application Telemetry".to_string(),
         "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
         TweakCategory::Telemetry,
@@ -640,7 +625,6 @@ pub fn disable_application_telemetry() -> Arc<Mutex<Tweak>> {
 
 pub fn thread_dpc_disable() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::ThreadDpcDisable,
         "Thread DPC Disable".to_string(),
         "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
         TweakCategory::Kernel,
@@ -658,7 +642,6 @@ pub fn thread_dpc_disable() -> Arc<Mutex<Tweak>> {
 
 pub fn svc_host_split_threshold() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::SvcHostSplitThreshold,
         "Disable SvcHost Split".to_string(),
         "Adjusts the SvcHost Split Threshold in KB to optimize system performance.".to_string(),
         TweakCategory::System,
@@ -674,7 +657,6 @@ pub fn svc_host_split_threshold() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_windows_defender() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableWindowsDefender,
         "Disable Windows Defender".to_string(),
         "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.".to_string(),
         TweakCategory::Security,
@@ -692,7 +674,6 @@ pub fn disable_windows_defender() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_page_file_encryption() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisablePageFileEncryption,
         "Disable Page File Encryption".to_string(),
         "Disables page file encryption to improve system performance.".to_string(),
         TweakCategory::Memory,
@@ -710,7 +691,6 @@ pub fn disable_page_file_encryption() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_intel_tsx() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableIntelTSX,
         "Disable Intel TSX".to_string(),
         "Disables Intel Transactional Synchronization Extensions (TSX) operations to mitigate potential security vulnerabilities.".to_string(),
         TweakCategory::Security,
@@ -728,7 +708,6 @@ pub fn disable_intel_tsx() -> Arc<Mutex<Tweak>> {
 
 pub fn disable_windows_maintenance() -> Arc<Mutex<Tweak>> {
     Tweak::registry_tweak(
-        TweakId::DisableWindowsMaintenance,
         "Disable Windows Maintenance".to_string(),
         "Disables Windows Maintenance by setting the `MaintenanceDisabled` registry value to `1`. This prevents Windows from performing maintenance tasks, such as software updates, system diagnostics, and security scans.".to_string(),
         TweakCategory::Action,

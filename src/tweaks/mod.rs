@@ -1,19 +1,20 @@
 // src/tweaks/mod.rs
-pub mod group_policy_tweaks;
+pub mod group_policy;
 pub mod method;
-pub mod powershell_tweaks;
-pub mod registry_tweaks;
-pub mod rust_tweaks;
+pub mod powershell;
+pub mod registry;
+pub mod rust;
 
 use std::{
+    collections::HashMap,
     hash::Hash,
     sync::{Arc, Mutex},
 };
 
-use group_policy_tweaks::GroupPolicyTweak;
+use group_policy::GroupPolicyTweak;
 use method::TweakMethod;
-use powershell_tweaks::PowershellTweak;
-use registry_tweaks::RegistryTweak;
+use powershell::PowershellTweak;
+use registry::RegistryTweak;
 
 use crate::widgets::TweakWidget;
 
@@ -95,8 +96,6 @@ pub enum TweakId {
 /// Represents a single tweak that can be applied to the system.
 #[derive(Clone)]
 pub struct Tweak {
-    /// Unique identifier for the tweak.
-    pub id: TweakId,
     /// Display name of the tweak.
     pub name: String,
     /// Description of the tweak and its effects, shown in hover tooltip.
@@ -126,7 +125,6 @@ pub enum TweakStatus {
 
 impl Tweak {
     pub fn registry_tweak(
-        id: TweakId,
         name: String,
         description: String,
         category: TweakCategory,
@@ -134,7 +132,6 @@ impl Tweak {
         requires_reboot: bool,
     ) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
-            id,
             name,
             description,
             category,
@@ -148,7 +145,6 @@ impl Tweak {
     }
 
     pub fn powershell(
-        id: TweakId,
         name: String,
         description: String,
         category: TweakCategory,
@@ -161,7 +157,6 @@ impl Tweak {
         };
 
         Arc::new(Mutex::new(Self {
-            id,
             name,
             description,
             category,
@@ -175,7 +170,6 @@ impl Tweak {
     }
 
     pub fn group_policy(
-        id: TweakId,
         name: String,
         description: String,
         category: TweakCategory,
@@ -183,7 +177,6 @@ impl Tweak {
         requires_reboot: bool,
     ) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
-            id,
             name,
             description,
             category,
@@ -197,7 +190,6 @@ impl Tweak {
     }
 
     pub fn rust<M: TweakMethod + 'static>(
-        id: TweakId,
         name: String,
         description: String,
         category: TweakCategory,
@@ -205,7 +197,6 @@ impl Tweak {
         requires_reboot: bool,
     ) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
-            id,
             name,
             description,
             category,
@@ -242,58 +233,145 @@ impl Tweak {
         *self.pending_reboot.lock().unwrap() = false;
     }
 
-    pub fn initial_state(&self) -> Result<bool, anyhow::Error> {
-        self.method.initial_state(self.id)
+    pub fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
+        self.method.initial_state(id)
     }
 
-    pub fn apply(&self) -> Result<(), anyhow::Error> {
-        self.method.apply(self.id)
+    pub fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
+        self.method.apply(id)
     }
 
-    pub fn revert(&self) -> Result<(), anyhow::Error> {
-        self.method.revert(self.id)
+    pub fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
+        self.method.revert(id)
     }
 }
 
 /// Initializes all tweaks with their respective configurations.
-pub fn tweak_list() -> Vec<Arc<Mutex<Tweak>>> {
-    vec![
-        rust_tweaks::low_res_mode(),
-        group_policy_tweaks::se_lock_memory_privilege(),
-        powershell_tweaks::process_idle_tasks(),
-        powershell_tweaks::enable_ultimate_performance_plan(),
-        powershell_tweaks::additional_kernel_worker_threads(),
-        powershell_tweaks::disable_hpet(),
-        powershell_tweaks::aggressive_dpc_handling(),
-        powershell_tweaks::enhanced_kernel_performance(),
-        powershell_tweaks::disable_ram_compression(),
-        powershell_tweaks::disable_pagefile(),
-        powershell_tweaks::disable_speculative_execution_mitigations(),
-        powershell_tweaks::disable_data_execution_prevention(),
-        powershell_tweaks::kill_explorer(),
-        powershell_tweaks::high_performance_visual_settings(),
-        powershell_tweaks::disable_local_firewall(),
-        powershell_tweaks::disable_process_idle_states(),
-        powershell_tweaks::kill_all_non_critical_services(),
-        powershell_tweaks::disable_success_auditing(),
-        registry_tweaks::enable_large_system_cache(),
-        registry_tweaks::system_responsiveness(),
-        registry_tweaks::disable_hw_acceleration(),
-        registry_tweaks::win32_priority_separation(),
-        registry_tweaks::disable_core_parking(),
-        registry_tweaks::disable_low_disk_space_checks(),
-        registry_tweaks::disable_ntfs_tunnelling(),
-        registry_tweaks::distribute_timers(),
-        registry_tweaks::disable_application_telemetry(),
-        registry_tweaks::disable_windows_error_reporting(),
-        registry_tweaks::dont_verify_random_drivers(),
-        registry_tweaks::disable_driver_paging(),
-        registry_tweaks::disable_prefetcher(),
-        registry_tweaks::thread_dpc_disable(),
-        registry_tweaks::svc_host_split_threshold(),
-        registry_tweaks::disable_windows_defender(),
-        registry_tweaks::disable_page_file_encryption(),
-        registry_tweaks::disable_intel_tsx(),
-        registry_tweaks::disable_windows_maintenance(),
-    ]
+pub fn all() -> HashMap<TweakId, Arc<Mutex<Tweak>>> {
+    let mut tweaks = HashMap::new();
+
+    tweaks.insert(
+        TweakId::LargeSystemCache,
+        registry::enable_large_system_cache(),
+    );
+    tweaks.insert(
+        TweakId::SystemResponsiveness,
+        registry::system_responsiveness(),
+    );
+    tweaks.insert(
+        TweakId::DisableHWAcceleration,
+        registry::disable_hw_acceleration(),
+    );
+    tweaks.insert(
+        TweakId::Win32PrioritySeparation,
+        registry::win32_priority_separation(),
+    );
+    tweaks.insert(
+        TweakId::DisableCoreParking,
+        registry::disable_core_parking(),
+    );
+    tweaks.insert(TweakId::ProcessIdleTasks, powershell::process_idle_tasks());
+    tweaks.insert(
+        TweakId::SeLockMemoryPrivilege,
+        group_policy::se_lock_memory_privilege(),
+    );
+    tweaks.insert(
+        TweakId::UltimatePerformancePlan,
+        powershell::enable_ultimate_performance_plan(),
+    );
+    tweaks.insert(
+        TweakId::NoLowDiskSpaceChecks,
+        registry::disable_low_disk_space_checks(),
+    );
+    tweaks.insert(
+        TweakId::DisableNtfsTunnelling,
+        registry::disable_ntfs_tunnelling(),
+    );
+    tweaks.insert(TweakId::DistributeTimers, registry::distribute_timers());
+    tweaks.insert(
+        TweakId::AdditionalKernelWorkerThreads,
+        powershell::additional_kernel_worker_threads(),
+    );
+    tweaks.insert(TweakId::DisableHPET, powershell::disable_hpet());
+
+    tweaks.insert(
+        TweakId::AggressiveDpcHandling,
+        powershell::aggressive_dpc_handling(),
+    );
+    tweaks.insert(
+        TweakId::EnhancedKernelPerformance,
+        powershell::enhanced_kernel_performance(),
+    );
+    tweaks.insert(
+        TweakId::DisableRamCompression,
+        powershell::disable_ram_compression(),
+    );
+    tweaks.insert(
+        TweakId::DisableApplicationTelemetry,
+        registry::disable_application_telemetry(),
+    );
+    tweaks.insert(
+        TweakId::DisableWindowsErrorReporting,
+        registry::disable_windows_error_reporting(),
+    );
+    tweaks.insert(
+        TweakId::DisableLocalFirewall,
+        powershell::disable_local_firewall(),
+    );
+    tweaks.insert(
+        TweakId::DontVerifyRandomDrivers,
+        registry::dont_verify_random_drivers(),
+    );
+    tweaks.insert(
+        TweakId::DisableDriverPaging,
+        registry::disable_driver_paging(),
+    );
+    tweaks.insert(TweakId::DisablePrefetcher, registry::disable_prefetcher());
+    tweaks.insert(
+        TweakId::DisableSuccessAuditing,
+        powershell::disable_success_auditing(),
+    );
+    tweaks.insert(TweakId::ThreadDpcDisable, registry::thread_dpc_disable());
+    tweaks.insert(
+        TweakId::SvcHostSplitThreshold,
+        registry::svc_host_split_threshold(),
+    );
+    tweaks.insert(TweakId::DisablePagefile, powershell::disable_pagefile());
+    tweaks.insert(
+        TweakId::DisableSpeculativeExecutionMitigations,
+        powershell::disable_speculative_execution_mitigations(),
+    );
+    tweaks.insert(
+        TweakId::DisableDataExecutionPrevention,
+        powershell::disable_data_execution_prevention(),
+    );
+    tweaks.insert(
+        TweakId::DisableWindowsDefender,
+        registry::disable_windows_defender(),
+    );
+    tweaks.insert(
+        TweakId::DisablePageFileEncryption,
+        registry::disable_page_file_encryption(),
+    );
+    tweaks.insert(
+        TweakId::DisableProcessIdleStates,
+        powershell::disable_process_idle_states(),
+    );
+    tweaks.insert(
+        TweakId::KillAllNonCriticalServices,
+        powershell::kill_all_non_critical_services(),
+    );
+    tweaks.insert(TweakId::DisableIntelTSX, registry::disable_intel_tsx());
+    tweaks.insert(
+        TweakId::DisableWindowsMaintenance,
+        registry::disable_windows_maintenance(),
+    );
+    tweaks.insert(TweakId::KillExplorer, powershell::kill_explorer());
+    tweaks.insert(
+        TweakId::HighPerformanceVisualSettings,
+        powershell::high_performance_visual_settings(),
+    );
+    tweaks.insert(TweakId::LowResMode, rust::low_res_mode());
+
+    tweaks
 }

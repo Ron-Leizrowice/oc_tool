@@ -70,7 +70,10 @@ impl GroupPolicyTweak {
                     id,
                     win_err
                 );
-                return Err(anyhow::Error::msg(format!("LsaOpenPolicy failed with error code: {}", win_err)));
+                return Err(anyhow::Error::msg(format!(
+                    "LsaOpenPolicy failed with error code: {}",
+                    win_err
+                )));
             }
 
             // Ensure the policy handle is closed properly
@@ -209,7 +212,7 @@ impl GroupPolicyTweak {
         }
     }
 
-     /// Modifies user rights by adding or removing a specified privilege.
+    /// Modifies user rights by adding or removing a specified privilege.
     ///
     /// # Parameters
     ///
@@ -234,7 +237,9 @@ impl GroupPolicyTweak {
             if status != NTSTATUS(0) {
                 let win_err = LsaNtStatusToWinError(status);
                 tracing::error!("LsaOpenPolicy failed with error code: {}", win_err);
-                return Err(anyhow::Error::msg(format!("LsaOpenPolicy failed with error code: {}", win_err
+                return Err(anyhow::Error::msg(format!(
+                    "LsaOpenPolicy failed with error code: {}",
+                    win_err
                 )));
             }
 
@@ -294,7 +299,9 @@ impl GroupPolicyTweak {
                     if status != NTSTATUS(0) {
                         let win_err = LsaNtStatusToWinError(status);
                         tracing::error!("LsaAddAccountRights failed with error code: {}", win_err);
-                        return Err(anyhow::Error::msg(format!("LsaAddAccountRights failed with error code: {}", win_err
+                        return Err(anyhow::Error::msg(format!(
+                            "LsaAddAccountRights failed with error code: {}",
+                            win_err
                         )));
                     }
                     tracing::info!(
@@ -314,7 +321,9 @@ impl GroupPolicyTweak {
                                 "LsaRemoveAccountRights failed with error code: {}",
                                 win_err
                             );
-                            return Err(anyhow::Error::msg(format!("LsaRemoveAccountRights failed with error code: {}", win_err
+                            return Err(anyhow::Error::msg(format!(
+                                "LsaRemoveAccountRights failed with error code: {}",
+                                win_err
                             )));
                         } else {
                             tracing::debug!(
@@ -336,7 +345,10 @@ impl GroupPolicyTweak {
             } else {
                 let error_code = GetLastError();
                 tracing::error!("LookupAccountNameW failed. Error code: {}", error_code.0);
-                Err(anyhow::Error::msg(format!("LookupAccountNameW failed. Error code: {}", error_code.0)))
+                Err(anyhow::Error::msg(format!(
+                    "LookupAccountNameW failed. Error code: {}",
+                    error_code.0
+                )))
             }
         }
     }
@@ -371,7 +383,6 @@ impl TweakMethod for GroupPolicyTweak {
             }
         }
     }
-
 
     /// Applies the Group Policy tweak by assigning the specified privilege to the current user.
     ///
@@ -408,8 +419,6 @@ impl TweakMethod for GroupPolicyTweak {
             }
         }
     }
-
-   
 }
 
 pub struct LsaHandleGuard {
@@ -434,7 +443,6 @@ impl Drop for LsaHandleGuard {
 
 pub fn se_lock_memory_privilege() -> Arc<Mutex<Tweak>> {
     Tweak::group_policy(
-        TweakId::SeLockMemoryPrivilege,
         "SeLockMemoryPrivilege".to_string(),
         "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),
         TweakCategory::Memory,
@@ -443,6 +451,5 @@ pub fn se_lock_memory_privilege() -> Arc<Mutex<Tweak>> {
             value: GroupPolicyValue::Enabled,
         },
         true,
-        
     )
 }

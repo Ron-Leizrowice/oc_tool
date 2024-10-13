@@ -1,25 +1,36 @@
 // src/worker.rs
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex,
+    },
     thread,
 };
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
 use tracing::{error, info, warn};
 
 use crate::tweaks::{Tweak, TweakId, TweakStatus};
 
 /// Define worker messages and results
 #[derive(Clone)]
-pub enum Task {
-    ReadInitialState { tweak: Arc<Mutex<Tweak>> },
-    ApplyTweak { tweak: Arc<Mutex<Tweak>> },
-    RevertTweak { tweak: Arc<Mutex<Tweak>> },
+pub enum WorkerTask {
+    ReadInitialState {
+        id: TweakId,
+        tweak: Arc<Mutex<Tweak>>,
+    },
+    ApplyTweak {
+        id: TweakId,
+        tweak: Arc<Mutex<Tweak>>,
+    },
+    RevertTweak {
+        id: TweakId,
+        tweak: Arc<Mutex<Tweak>>,
+    },
     Shutdown,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum WorkerResult {
     TweakApplied {
         id: TweakId,
@@ -41,22 +52,24 @@ pub enum WorkerResult {
 
 /// Manages a pool of worker threads that process tasks concurrently.
 pub struct WorkerPool {
-    task_sender: Sender<Task>,
-    result_receiver: Receiver<WorkerResult>,
+    task_sender: mpsc::Sender<WorkerTask>,
+    result_receiver: mpsc::Receiver<WorkerResult>,
 }
 
 impl WorkerPool {
     /// Creates a new `WorkerPool` with the specified number of workers.
     pub fn new(num_workers: usize) -> Self {
-        let (task_sender, task_receiver) = unbounded::<Task>();
-        let (result_sender, result_receiver) = unbounded::<WorkerResult>();
+        let (task_sender, task_receiver) = mpsc::channel::<WorkerTask>();
+        let task_receiver = Arc::new(Mutex::new(task_receiver));
 
-        for worker_id in 0..num_workers {
-            let task_receiver = task_receiver.clone();
+        let (result_sender, result_receiver) = mpsc::channel::<WorkerResult>();
+
+        for _ in 0..num_workers {
+            let task_receiver = Arc::clone(&task_receiver);
             let result_sender = result_sender.clone();
 
             thread::spawn(move || {
-                worker_loop(worker_id, task_receiver, result_sender);
+                worker_loop(task_receiver, result_sender);
             });
         }
 
@@ -67,7 +80,7 @@ impl WorkerPool {
     }
 
     /// Sends a task to the worker pool.
-    pub fn send_task(&self, task: Task) -> Result<(), crossbeam::channel::SendError<Task>> {
+    pub fn send_task(&self, task: WorkerTask) -> Result<(), mpsc::SendError<WorkerTask>> {
         self.task_sender.send(task)
     }
 
@@ -79,7 +92,7 @@ impl WorkerPool {
     /// Sends shutdown signals to all workers.
     pub fn shutdown(&self, num_workers: usize) {
         for _ in 0..num_workers {
-            if let Err(e) = self.task_sender.send(Task::Shutdown) {
+            if let Err(e) = self.task_sender.send(WorkerTask::Shutdown) {
                 error!("Failed to send Shutdown task: {}", e);
             }
         }
@@ -88,50 +101,47 @@ impl WorkerPool {
 
 /// The main loop for each worker thread.
 fn worker_loop(
-    worker_id: usize,
-    task_receiver: Receiver<Task>,
+    task_receiver: Arc<Mutex<Receiver<WorkerTask>>>,
     result_sender: Sender<WorkerResult>,
 ) {
-    info!("Worker {} started.", worker_id);
     loop {
-        match task_receiver.recv() {
+        let task = {
+            let receiver = task_receiver.lock().unwrap();
+            receiver.recv()
+        };
+
+        match task {
             Ok(task) => match task {
-                Task::ReadInitialState { tweak } => {
-                    handle_read_initial_state(worker_id, tweak, &result_sender);
+                WorkerTask::ReadInitialState { id, tweak } => {
+                    handle_read_initial_state(id, tweak, &result_sender);
                 }
-                Task::ApplyTweak { tweak } => {
-                    handle_apply_tweak(worker_id, tweak, &result_sender);
+                WorkerTask::ApplyTweak { id, tweak } => {
+                    handle_apply_tweak(id, tweak, &result_sender);
                 }
-                Task::RevertTweak { tweak } => {
-                    handle_revert_tweak(worker_id, tweak, &result_sender);
+                WorkerTask::RevertTweak { id, tweak } => {
+                    handle_revert_tweak(id, tweak, &result_sender);
                 }
-                Task::Shutdown => {
-                    info!("Worker {} received Shutdown task.", worker_id);
+                WorkerTask::Shutdown => {
+                    info!("Worker: received Shutdown task.");
                     if let Err(e) = result_sender.send(WorkerResult::ShutdownComplete) {
-                        error!(
-                            "Worker {} failed to send ShutdownComplete: {}",
-                            worker_id, e
-                        );
+                        error!("Worker: failed to send ShutdownComplete: {e}");
                     }
                     break;
                 }
             },
             Err(_) => {
                 // Channel closed, terminate the worker
-                info!(
-                    "Worker {} detected closed task channel. Terminating.",
-                    worker_id
-                );
+                info!("Worker: detected closed task channel. Terminating.",);
                 break;
             }
         }
     }
-    info!("Worker {} has shut down.", worker_id);
+    info!("Worker shut down.");
 }
 
 /// Handles the ReadInitialState task.
 fn handle_read_initial_state(
-    worker_id: usize,
+    tweak_id: TweakId,
     tweak: Arc<Mutex<Tweak>>,
     result_sender: &Sender<WorkerResult>,
 ) {
@@ -140,35 +150,28 @@ fn handle_read_initial_state(
         tweak_guard.clone()
     };
 
-    info!(
-        "Worker {}: Reading initial state for {:?}",
-        worker_id, tweak_clone.id
-    );
+    info!("Worker: Reading initial state for {tweak_id:?}");
 
     // Perform the blocking read operation **without holding any locks**
-    let is_enabled = match tweak_clone.initial_state() {
+    let is_enabled = match tweak_clone.initial_state(tweak_id) {
         Ok(state) => state,
         Err(e) => {
-            warn!(
-                "Worker {}: Failed to read initial state for {:?}: {:?}",
-                worker_id, tweak_clone.id, e
-            );
+            warn!("Worker: Failed to read initial state for {tweak_id:?}: {e:?}");
 
             // Update the tweak status to Failed
             {
-                let tweak_guard = tweak.lock().unwrap().clone();
+                let tweak_guard = tweak.lock().unwrap();
                 tweak_guard.set_status(TweakStatus::Failed(e.to_string()));
             }
 
             // Send failure result
             if let Err(send_err) = result_sender.send(WorkerResult::InitialStateRead {
-                id: tweak_clone.id,
+                id: tweak_id,
                 success: false,
                 error: Some(e.to_string()),
             }) {
                 error!(
-                    "Worker {} failed to send InitialStateRead failure for {:?}: {}",
-                    worker_id, tweak_clone.id, send_err
+                    "Worker: failed to send InitialStateRead failure for {tweak_id:?}: {send_err}"
                 );
             }
             return;
@@ -185,63 +188,47 @@ fn handle_read_initial_state(
         tweak_guard.set_status(TweakStatus::Idle);
     }
 
-    info!(
-        "Worker {}: Initial state read successfully for {:?}. Enabled: {}",
-        worker_id, tweak_clone.id, is_enabled
-    );
+    info!("Worker:: Initial state read successfully for {tweak_id:?}. Enabled: {is_enabled}");
 
     // Send success result
     if let Err(e) = result_sender.send(WorkerResult::InitialStateRead {
-        id: tweak_clone.id,
+        id: tweak_id,
         success: true,
         error: None,
     }) {
-        error!(
-            "Worker {} failed to send InitialStateRead result for {:?}: {}",
-            worker_id, tweak_clone.id, e
-        );
+        error!("Worker: failed to send InitialStateRead result for {tweak_id:?}: {e}");
     }
 }
 
 /// Handles the ApplyTweak task.
 fn handle_apply_tweak(
-    worker_id: usize,
+    tweak_id: TweakId,
     tweak: Arc<Mutex<Tweak>>,
     result_sender: &Sender<WorkerResult>,
 ) {
-    let tweak_id;
-    {
-        let tweak_guard = tweak.lock().unwrap();
-        tweak_id = tweak_guard.id;
-    }
-
-    info!("Worker {}: Applying tweak {:?}", worker_id, tweak_id);
+    info!("Worker: Applying tweak {tweak_id:?}");
 
     // Perform the blocking apply operation **without holding any locks**
     let apply_result = {
         let tweak_guard = tweak.lock().unwrap();
         tweak_guard.set_status(TweakStatus::Applying);
-        tweak_guard.apply()
+        tweak_guard.apply(tweak_id)
     };
 
     // Step 3: Update status and other fields based on the result
     match apply_result {
         Ok(_) => {
-            let tweak_guard = tweak.lock().unwrap();
-            tweak_guard.set_enabled();
-            tweak_guard.set_status(TweakStatus::Idle);
+            {
+                let tweak_guard = tweak.lock().unwrap();
+                tweak_guard.set_enabled();
+                tweak_guard.set_status(TweakStatus::Idle);
 
-            if tweak_guard.requires_reboot {
-                tweak_guard.pending_reboot();
-                info!(
-                    "Worker {}: {:?} applied successfully. Pending reboot.",
-                    worker_id, tweak_id
-                );
-            } else {
-                info!(
-                    "Worker {}: {:?} applied successfully. No reboot required.",
-                    worker_id, tweak_id
-                );
+                if tweak_guard.requires_reboot {
+                    tweak_guard.pending_reboot();
+                    info!("Worker: {tweak_id:?} applied successfully. Pending reboot.",);
+                } else {
+                    info!("Worker: {tweak_id:?} applied successfully. No reboot required.");
+                }
             }
 
             // Send success result
@@ -250,10 +237,7 @@ fn handle_apply_tweak(
                 success: true,
                 error: None,
             }) {
-                error!(
-                    "Worker {} failed to send TweakApplied result for {:?}: {}",
-                    worker_id, tweak_id, e
-                );
+                error!("Worker: failed to send TweakApplied result for {tweak_id:?}: {e}");
             }
         }
         Err(e) => {
@@ -263,9 +247,7 @@ fn handle_apply_tweak(
             }
 
             warn!(
-                "Worker {}: Failed to apply tweak {:?}: {:?}",
-                worker_id,
-                tweak_id,
+                "Worker: Failed to apply tweak {tweak_id:?}: {:?}",
                 tweak.lock().unwrap().get_status()
             );
 
@@ -275,10 +257,7 @@ fn handle_apply_tweak(
                 success: false,
                 error: Some(e.to_string()),
             }) {
-                error!(
-                    "Worker {} failed to send TweakApplied failure for {:?}: {}",
-                    worker_id, tweak_id, send_err
-                );
+                error!("Worker: failed to send TweakApplied failure for {tweak_id:?}: {send_err}");
             }
         }
     }
@@ -286,55 +265,50 @@ fn handle_apply_tweak(
 
 /// Handles the RevertTweak task.
 fn handle_revert_tweak(
-    worker_id: usize,
+    tweak_id: TweakId,
     tweak: Arc<Mutex<Tweak>>,
     result_sender: &Sender<WorkerResult>,
 ) {
-    let tweak_id;
-    {
-        let tweak_guard = tweak.lock().unwrap();
-        tweak_id = tweak_guard.id;
-    }
-
-    info!("Worker {}: Reverting tweak {:?}", worker_id, tweak_id);
+    info!("Worker: Reverting tweak {tweak_id:?}");
 
     let revert_result = {
         let tweak_guard = tweak.lock().unwrap();
         tweak_guard.set_status(TweakStatus::Applying);
-        tweak_guard.revert()
+        tweak_guard.revert(tweak_id)
     };
 
     // Step 3: Update status and other fields based on the result
     match revert_result {
         Ok(_) => {
-            let tweak_guard = tweak.lock().unwrap();
-            tweak_guard.set_disabled();
-            tweak_guard.set_status(TweakStatus::Idle);
+            {
+                let tweak_guard = tweak.lock().unwrap();
+                tweak_guard.set_disabled();
+                tweak_guard.set_status(TweakStatus::Idle);
 
-            if tweak_guard.requires_reboot {
-                tweak_guard.pending_reboot();
-
-                // Send success result
-                if let Err(e) = result_sender.send(WorkerResult::TweakReverted {
-                    id: tweak_id,
-                    success: true,
-                    error: None,
-                }) {
-                    error!(
-                        "Worker {} failed to send TweakReverted result for {:?}: {}",
-                        worker_id, tweak_id, e
-                    );
+                if tweak_guard.requires_reboot {
+                    tweak_guard.pending_reboot();
                 }
+            }
+
+            info!("Worker: {tweak_id:?} reverted successfully.");
+
+            // Send success result
+            if let Err(e) = result_sender.send(WorkerResult::TweakReverted {
+                id: tweak_id,
+                success: true,
+                error: None,
+            }) {
+                error!("Worker: failed to send TweakReverted result for {tweak_id:?}: {e}");
             }
         }
         Err(e) => {
-            let tweak_guard = tweak.lock().unwrap();
-            tweak_guard.set_status(TweakStatus::Failed(e.to_string()));
+            {
+                let tweak_guard = tweak.lock().unwrap();
+                tweak_guard.set_status(TweakStatus::Failed(e.to_string()));
+            }
 
             warn!(
-                "Worker {}: Failed to revert tweak {:?}: {:?}",
-                worker_id,
-                tweak_id,
+                "Worker: Failed to revert tweak {tweak_id:?}: {:?}",
                 tweak.lock().unwrap().get_status()
             );
 
@@ -344,10 +318,7 @@ fn handle_revert_tweak(
                 success: false,
                 error: Some(e.to_string()),
             }) {
-                error!(
-                    "Worker {} failed to send TweakReverted failure for {:?}: {}",
-                    worker_id, tweak_id, send_err
-                );
+                error!("Worker: failed to send TweakReverted failure for {tweak_id:?}: {send_err}");
             }
         }
     }
