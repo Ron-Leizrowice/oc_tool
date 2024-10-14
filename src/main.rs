@@ -11,7 +11,7 @@ use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
-use tracing::{error, info, span, trace, Level};
+use tracing::Level;
 use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
@@ -62,7 +62,7 @@ pub struct MyApp {
 impl MyApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Initialize tracing spans for better context
-        let app_span = span!(Level::INFO, "App Initialization");
+        let app_span = tracing::span!(Level::INFO, "App Initialization");
         let _app_guard = app_span.enter();
 
         // Initialize tweaks
@@ -82,9 +82,10 @@ impl MyApp {
                 action: TweakAction::ReadInitialState,
             };
             if let Err(e) = orchestrator.submit_task(task) {
-                error!(
+                tracing::error!(
                     "Failed to submit initial state task for tweak {:?}: {:?}",
-                    id, e
+                    id,
+                    e
                 );
             }
         }
@@ -277,7 +278,7 @@ impl MyApp {
                                                 action,
                                             };
                                             if let Err(e) = self.orchestrator.submit_task(task) {
-                                                error!(
+                                                tracing::error!(
                                                     "Failed to submit task for tweak {:?}: {:?}",
                                                     tweak_id, e
                                                 );
@@ -324,7 +325,7 @@ impl MyApp {
                                                 action: TweakAction::Apply,
                                             };
                                             if let Err(e) = self.orchestrator.submit_task(task) {
-                                                error!("Failed to submit apply task for tweak {:?}: {:?}", tweak_id, e);
+                                                tracing::error!("Failed to submit apply task for tweak {:?}: {:?}", tweak_id, e);
                                             }
                                         }
                                     }
@@ -383,7 +384,7 @@ impl MyApp {
                         {
                             // Trigger system reboot
                             if let Err(e) = reboot_system() {
-                                error!("Failed to initiate reboot: {:?}", e);
+                                tracing::error!("Failed to initiate reboot: {:?}", e);
                                 tinyfiledialogs::message_box_ok(
                                     "Overclocking Assistant",
                                     &format!("Failed to reboot the system: {:?}", e),
@@ -403,10 +404,10 @@ impl MyApp {
                     {
                         match reboot_into_bios() {
                             Ok(_) => {
-                                info!("Rebooting into BIOS settings...");
+                                tracing::debug!("Rebooting into BIOS settings...");
                             }
                             Err(e) => {
-                                error!("Failed to reboot into BIOS: {:?}", e);
+                                tracing::error!("Failed to reboot into BIOS: {:?}", e);
                             }
                         }
                     }
@@ -425,20 +426,20 @@ impl MyApp {
                         match self.slow_mode {
                             false => match self.enable_slow_mode() {
                                 Ok(_) => {
-                                    info!("Slow mode enabled successfully.");
+                                    tracing::debug!("Slow mode enabled successfully.");
                                     self.slow_mode = true;
                                 }
                                 Err(e) => {
-                                    error!("Failed to enable slow mode: {:?}", e);
+                                    tracing::error!("Failed to enable slow mode: {:?}", e);
                                 }
                             },
                             true => match self.disable_slow_mode() {
                                 Ok(_) => {
-                                    info!("Slow mode disabled successfully.");
+                                    tracing::debug!("Slow mode disabled successfully.");
                                     self.slow_mode = false;
                                 }
                                 Err(e) => {
-                                    error!("Failed to disable slow mode: {:?}", e);
+                                    tracing::error!("Failed to disable slow mode: {:?}", e);
                                 }
                             },
                         }
@@ -495,19 +496,19 @@ impl App for MyApp {
             action: TweakAction::Revert,
         };
         if let Err(e) = self.orchestrator.submit_task(task) {
-            error!("Failed to submit revert task for low-res mode: {:?}", e);
+            tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
         }
 
         // Disable slow mode
         if let Err(e) = self.disable_slow_mode() {
-            error!("Failed to disable slow mode during exit: {:?}", e);
+            tracing::error!("Failed to disable slow mode during exit: {:?}", e);
         }
     }
 }
 
 fn main() -> eframe::Result<()> {
     match is_elevated() {
-        true => info!("Running with elevated privileges."),
+        true => tracing::debug!("Running with elevated privileges."),
         false => {
             tinyfiledialogs::message_box_ok(
                 "OC Tool",
@@ -525,7 +526,7 @@ fn main() -> eframe::Result<()> {
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .init();
 
-    info!("Starting Overclocking Assistant...");
+    tracing::debug!("Starting Overclocking Assistant...");
 
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -535,9 +536,9 @@ fn main() -> eframe::Result<()> {
     };
 
     // Create a tracing span for the run_native call
-    let run_span = span!(Level::INFO, "Run Native");
+    let run_span = tracing::span!(Level::INFO, "Run Native");
     run_span.in_scope(|| {
-        trace!("Entering Run Native span.");
+        tracing::trace!("Entering Run Native span.");
         eframe::run_native(
             "OC Tool",
             options,
