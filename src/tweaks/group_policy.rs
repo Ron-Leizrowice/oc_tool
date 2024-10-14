@@ -26,6 +26,8 @@ pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
 /// Represents a Group Policy tweak, including the policy key and desired value.
 #[derive(Clone, Debug)]
 pub struct GroupPolicyTweak {
+    /// Unique ID
+    pub id: TweakId,
     /// The policy key (e.g., "SeLockMemoryPrivilege").
     pub key: String,
     /// The desired value for the policy.
@@ -46,8 +48,11 @@ impl GroupPolicyTweak {
     ///
     /// - `Ok(GroupPolicyValue)` indicating if the policy is enabled or disabled.
     /// - `Err(GroupPolicyError)` if the operation fails.
-    pub fn read_current_value(&self, id: TweakId) -> Result<GroupPolicyValue, anyhow::Error> {
-        tracing::info!("{:?} -> Reading current value of Group Policy tweak.", id,);
+    pub fn read_current_value(&self) -> Result<GroupPolicyValue, anyhow::Error> {
+        tracing::info!(
+            "{:?} -> Reading current value of Group Policy tweak.",
+            self.id,
+        );
 
         unsafe {
             // Initialize object attributes for LsaOpenPolicy
@@ -64,7 +69,7 @@ impl GroupPolicyTweak {
                 let win_err = LsaNtStatusToWinError(status);
                 tracing::error!(
                     "{:?} -> LsaOpenPolicy failed with error code: {}",
-                    id,
+                    self.id,
                     win_err
                 );
                 return Err(anyhow::Error::msg(format!(
@@ -102,7 +107,7 @@ impl GroupPolicyTweak {
                 // 122 is ERROR_INSUFFICIENT_BUFFER
                 tracing::error!(
                     "{:?} -> LookupAccountNameW failed to get buffer sizes. Error code: {}",
-                    id,
+                    self.id,
                     GetLastError().0
                 );
                 return Err(anyhow::Error::msg(format!(
@@ -132,7 +137,7 @@ impl GroupPolicyTweak {
                 let error_code = GetLastError();
                 tracing::error!(
                     "{:?} -> LookupAccountNameW failed. Error code: {}",
-                    id,
+                    self.id,
                     error_code.0
                 );
                 return Err(anyhow::Error::msg(format!(
@@ -174,14 +179,14 @@ impl GroupPolicyTweak {
                 if has_privilege {
                     tracing::info!(
                         "{:?} -> Group Policy tweak is enabled for user '{}'.",
-                        id,
+                        self.id,
                         user_name
                     );
                     Ok(GroupPolicyValue::Enabled)
                 } else {
                     tracing::info!(
                         "{:?} -> Group Policy tweak is disabled for user '{}'.",
-                        id,
+                        self.id,
                         user_name
                     );
                     Ok(GroupPolicyValue::Disabled)
@@ -190,7 +195,7 @@ impl GroupPolicyTweak {
                 // The account has no rights assigned
                 tracing::info!(
                     "{:?} -> Group Policy tweak is disabled for user '{}'.",
-                    id,
+                    self.id,
                     user_name
                 );
                 Ok(GroupPolicyValue::Disabled)
@@ -198,7 +203,7 @@ impl GroupPolicyTweak {
                 let win_err = LsaNtStatusToWinError(status);
                 tracing::error!(
                     "{:?} -> LsaEnumerateAccountRights failed with error code: {}",
-                    id,
+                    self.id,
                     win_err
                 );
                 Err(anyhow::Error::msg(format!(
@@ -358,14 +363,17 @@ impl TweakMethod for GroupPolicyTweak {
     /// - `Ok(true)` if the tweak is enabled.
     /// - `Ok(false)` if the tweak is disabled.
     /// - `Err(GroupPolicyError)` if the operation fails.
-    fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
-        tracing::info!("{:?} -> Checking if Group Policy tweak is enabled.", id);
-        match self.read_current_value(id) {
+    fn initial_state(&self) -> Result<bool, anyhow::Error> {
+        tracing::info!(
+            "{:?} -> Checking if Group Policy tweak is enabled.",
+            self.id
+        );
+        match self.read_current_value() {
             Ok(value) => {
                 let is_enabled = value == self.value;
                 tracing::info!(
                     "{:?} -> Group Policy tweak is {}.",
-                    id,
+                    self.id,
                     if is_enabled { "enabled" } else { "disabled" }
                 );
                 Ok(is_enabled)
@@ -373,7 +381,7 @@ impl TweakMethod for GroupPolicyTweak {
             Err(e) => {
                 tracing::error!(
                     "{:?} -> Failed to check if Group Policy tweak is enabled: {:?}",
-                    id,
+                    self.id,
                     e
                 );
                 Err(e)
@@ -387,13 +395,17 @@ impl TweakMethod for GroupPolicyTweak {
     ///
     /// - `Ok(())` if the operation succeeds.
     /// - `Err(GroupPolicyError)` if the operation fails.
-    fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        tracing::info!("{:?} -> Applying Group Policy tweak.", id);
+    fn apply(&self) -> Result<(), anyhow::Error> {
+        tracing::info!("{:?} -> Applying Group Policy tweak.", self.id);
         // Assign the privilege to the current user
         match self.modify_user_rights(&self.key, true) {
             Ok(_) => Ok(()),
             Err(e) => {
-                tracing::error!("{:?} -> Failed to apply Group Policy tweak: {:?}", id, e);
+                tracing::error!(
+                    "{:?} -> Failed to apply Group Policy tweak: {:?}",
+                    self.id,
+                    e
+                );
                 Err(e)
             }
         }
@@ -405,13 +417,17 @@ impl TweakMethod for GroupPolicyTweak {
     ///
     /// - `Ok(())` if the operation succeeds.
     /// - `Err(GroupPolicyError)` if the operation fails.
-    fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        tracing::info!("{:?} -> Reverting Group Policy tweak.", id);
+    fn revert(&self) -> Result<(), anyhow::Error> {
+        tracing::info!("{:?} -> Reverting Group Policy tweak.", self.id);
         // Remove the privilege from the current user
         match self.modify_user_rights(&self.key, false) {
             Ok(_) => Ok(()),
             Err(e) => {
-                tracing::error!("{:?} -> Failed to revert Group Policy tweak: {:?}", id, e);
+                tracing::error!(
+                    "{:?} -> Failed to revert Group Policy tweak: {:?}",
+                    self.id,
+                    e
+                );
                 Err(e)
             }
         }
@@ -444,6 +460,7 @@ pub fn se_lock_memory_privilege() -> Tweak {
         "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),
         TweakCategory::Memory,
         GroupPolicyTweak {
+            id: TweakId::SeLockMemoryPrivilege,
             key: "SeLockMemoryPrivilege".to_string(),
             value: GroupPolicyValue::Enabled,
         },

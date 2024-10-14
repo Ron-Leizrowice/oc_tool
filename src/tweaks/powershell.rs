@@ -9,6 +9,8 @@ use super::{Tweak, TweakCategory, TweakId, TweakMethod};
 /// Represents a PowerShell-based tweak, including scripts to read, apply, and undo the tweak.
 #[derive(Clone, Debug)]
 pub struct PowershellTweak {
+    /// The unique ID of the tweak
+    pub id: TweakId,
     /// PowerShell script to read the current state of the tweak.
     pub read_script: Option<String>,
     /// PowerShell script to apply the tweak.
@@ -27,9 +29,12 @@ impl PowershellTweak {
     /// - `Ok(Some(String))` with the current state if `read_script` is defined and succeeds.
     /// - `Ok(None)` if no `read_script` is defined.
     /// - `Err(anyhow::Error)` if the script execution fails.
-    pub fn read_current_state(&self, id: TweakId) -> Result<Option<String>, anyhow::Error> {
+    fn read_current_state(&self) -> Result<Option<String>, anyhow::Error> {
         if let Some(script) = &self.read_script {
-            info!("{:?} -> Reading current state of PowerShell tweak.", id);
+            info!(
+                "{:?} -> Reading current state of PowerShell tweak.",
+                self.id
+            );
             let output = Command::new("powershell")
                 .args([
                     "-NoProfile",
@@ -42,7 +47,7 @@ impl PowershellTweak {
                 .map_err(|e| {
                     anyhow::Error::msg(format!(
                         "{:?} -> Failed to execute PowerShell script '{}': {:?}",
-                        id, script, e
+                        self.id, script, e
                     ))
                 })?;
 
@@ -50,7 +55,7 @@ impl PowershellTweak {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 error!(
                     "{:?} -> PowerShell script '{}' failed with error: {}",
-                    id,
+                    self.id,
                     script,
                     stderr.trim()
                 );
@@ -61,12 +66,16 @@ impl PowershellTweak {
                 )));
             }
             let stdout = String::from_utf8_lossy(&output.stdout);
-            debug!("{:?} -> PowerShell script output: {}", id, stdout.trim());
+            debug!(
+                "{:?} -> PowerShell script output: {}",
+                self.id,
+                stdout.trim()
+            );
             Ok(Some(stdout.trim().to_string()))
         } else {
             debug!(
                 "{:?} -> No read script defined for PowerShell tweak. Skipping read operation.",
-                id
+                self.id
             );
             Ok(None)
         }
@@ -81,30 +90,30 @@ impl TweakMethod for PowershellTweak {
     /// - `Ok(true)` if the operation succeeds and the tweak is enabled.
     /// - `Ok(false)` if the operation succeeds and the tweak is disabled.
     /// - `Err(anyhow::Error)` if the operation fails.
-    fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
+    fn initial_state(&self) -> Result<bool, anyhow::Error> {
         if let Some(target_state) = &self.target_state {
-            info!("{:?} -> Checking if PowerShell tweak is enabled.", id);
-            match self.read_current_state(id) {
+            info!("{:?} -> Checking if PowerShell tweak is enabled.", self.id);
+            match self.read_current_state() {
                 Ok(Some(current_state)) => {
                     // check if the target state string is contained in the current state
                     let is_enabled = current_state.contains(target_state);
                     debug!(
                         "{:?} -> Current state: '{}', Target state: '{}', Enabled: {}",
-                        id, current_state, target_state, is_enabled
+                        self.id, current_state, target_state, is_enabled
                     );
                     Ok(is_enabled)
                 }
                 Ok(None) => {
                     warn!(
                         "{:?} -> No read script defined for PowerShell tweak. Assuming disabled.",
-                        id
+                        self.id
                     );
                     Ok(false)
                 }
                 Err(e) => {
                     error!(
                         error = ?e,
-                        "{:?} -> Failed to read current state of PowerShell tweak.", id
+                        "{:?} -> Failed to read current state of PowerShell tweak.", self.id
                     );
                     Err(e)
                 }
@@ -112,7 +121,7 @@ impl TweakMethod for PowershellTweak {
         } else {
             warn!(
                 "{:?} -> No target state defined for PowerShell tweak. Assuming disabled.",
-                id
+                self.id
             );
             Ok(false)
         }
@@ -124,10 +133,10 @@ impl TweakMethod for PowershellTweak {
     ///
     /// - `Ok(())` if the script executes successfully.
     /// - `Err(anyhow::Error)` if the script execution fails.
-    fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
+    fn apply(&self) -> Result<(), anyhow::Error> {
         info!(
             "{:?} -> Applying PowerShell tweak using script '{}'.",
-            id, &self.apply_script
+            self.id, &self.apply_script
         );
 
         let output = Command::new("powershell")
@@ -142,7 +151,7 @@ impl TweakMethod for PowershellTweak {
             .map_err(|e| {
                 anyhow::Error::msg(format!(
                     "{:?} -> Failed to execute PowerShell script '{}': {:?}",
-                    id, &self.apply_script, e
+                    self.id, &self.apply_script, e
                 ))
             })?;
 
@@ -152,14 +161,14 @@ impl TweakMethod for PowershellTweak {
         if output.status.success() {
             debug!(
                 "{:?} -> Apply script executed successfully. Output: {}",
-                id,
+                self.id,
                 stdout.trim()
             );
             Ok(())
         } else {
             error!(
                 "{:?} -> PowerShell script '{}' failed with error: {}",
-                id,
+                self.id,
                 &self.apply_script,
                 stderr.trim()
             );
@@ -177,11 +186,11 @@ impl TweakMethod for PowershellTweak {
     ///
     /// - `Ok(())` if the script executes successfully or no `undo_script` is defined.
     /// - `Err(anyhow::Error)` if the script execution fails.
-    fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
+    fn revert(&self) -> Result<(), anyhow::Error> {
         if let Some(script) = &self.undo_script {
             info!(
                 "{:?} -> Reverting PowerShell tweak using script '{}'.",
-                id, script
+                self.id, script
             );
 
             let output = Command::new("powershell")
@@ -196,7 +205,7 @@ impl TweakMethod for PowershellTweak {
                 .map_err(|e| {
                     anyhow::Error::msg(format!(
                         "{:?} -> Failed to execute PowerShell script '{}': {:?}",
-                        id, script, e
+                        self.id, script, e
                     ))
                 })?;
 
@@ -206,14 +215,14 @@ impl TweakMethod for PowershellTweak {
             if output.status.success() {
                 debug!(
                     "{:?} -> Revert script executed successfully. Output: {}",
-                    id,
+                    self.id,
                     stdout.trim()
                 );
                 Ok(())
             } else {
                 error!(
                     "{:?} -> PowerShell script '{}' failed with error: {}",
-                    id,
+                    self.id,
                     script,
                     stderr.trim()
                 );
@@ -226,19 +235,20 @@ impl TweakMethod for PowershellTweak {
         } else {
             warn!(
                 "{:?} -> No undo script defined for PowerShell tweak. Skipping revert operation.",
-                id
+                self.id
             );
             Ok(())
         }
     }
 }
 
-pub fn enable_ultimate_performance_plan() -> Tweak {
+pub fn ultimate_performance_plan() -> Tweak {
     Tweak::powershell_tweak(
         "Enable Ultimate Performance Plan".to_string(),
         "Activates the Ultimate Performance power plan, which is tailored for demanding workloads by minimizing micro-latencies and boosting hardware performance. It disables power-saving features like core parking, hard disk sleep, and processor throttling, ensuring CPU cores run at maximum frequency. This plan also keeps I/O devices and PCIe links at full power, prioritizing performance over energy efficiency. It’s designed to reduce the delays introduced by energy-saving policies, improving responsiveness in tasks that require consistent, high-throughput system resources..".to_string(),
         TweakCategory::Power,
         PowershellTweak {
+            id: TweakId::UltimatePerformancePlan,
             read_script: Some(
                 "powercfg /GETACTIVESCHEME".to_string(),
             ),
@@ -278,6 +288,7 @@ pub fn additional_kernel_worker_threads() -> Tweak {
         "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.".to_string(),
         TweakCategory::Kernel,
         PowershellTweak {
+            id: TweakId::AdditionalKernelWorkerThreads,
             read_script: Some(
                 r#"
                 Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Executive" -Name AdditionalCriticalWorkerThreads
@@ -316,6 +327,7 @@ pub fn disable_hpet() -> Tweak {
         "Disables the dynamic tick feature, which normally reduces timer interrupts during idle periods to conserve power. By disabling dynamic tick, the system maintains a constant rate of timer interrupts, improving performance in real-time applications by reducing latency and jitter. This tweak is useful in scenarios where consistent, low-latency processing is required, but it may increase power consumption as the CPU will not enter low-power states as frequently.".to_string(),
         TweakCategory::System,
         PowershellTweak {
+            id: TweakId::DisableHPET,
             read_script: Some(r#"(bcdedit /enum | Select-String "useplatformclock").ToString().Trim()"#.to_string()),
 
             apply_script: r#"
@@ -340,6 +352,7 @@ pub fn aggressive_dpc_handling() -> Tweak {
         "This tweak modifies kernel-level settings in the Windows Registry to aggressively optimize the handling of Deferred Procedure Calls (DPCs) by disabling timeouts, watchdogs, and minimizing queue depth, aiming to enhance system responsiveness and reduce latency. However, it also removes safeguards that monitor and control long-running DPCs, which could lead to system instability or crashes in certain scenarios, particularly during high-performance or overclocking operations.".to_string(),
         TweakCategory::Kernel,
         PowershellTweak {
+            id: TweakId::AggressiveDpcHandling,
             read_script: Some(
                 r#"
                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
@@ -403,6 +416,7 @@ pub fn enhanced_kernel_performance() -> Tweak {
         "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
         TweakCategory::Kernel,
         PowershellTweak {
+            id: TweakId::EnhancedKernelPerformance,
             read_script: Some(
                 r#"
                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
@@ -514,6 +528,7 @@ pub fn disable_ram_compression() -> Tweak {
         "Disables the RAM compression feature in Windows to potentially improve system performance by reducing CPU overhead. This may lead to higher memory usage.".to_string(),
         TweakCategory::Memory,
         PowershellTweak {
+            id: TweakId::DisableRamCompression,
             read_script: Some(
                 r#"
                 $memoryCompression = Get-MMAgent | Select-Object -ExpandProperty MemoryCompression
@@ -562,6 +577,7 @@ pub fn disable_local_firewall() -> Tweak {
         "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.".to_string(),
         TweakCategory::Security,
         PowershellTweak {
+            id: TweakId::DisableLocalFirewall,
             read_script: Some(
                 r#"
                 $firewallState = netsh advfirewall show allprofiles state | Select-String "State" | ForEach-Object { $_.Line }
@@ -611,6 +627,7 @@ pub fn disable_success_auditing() -> Tweak {
         "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.".to_string(),
         TweakCategory::Security,
         PowershellTweak {
+            id: TweakId::DisableSuccessAuditing,
             read_script: Some(
                 r#"
                 $auditSettings = (AuditPol /get /category:* /success).Contains("Success Disable")
@@ -661,6 +678,7 @@ pub fn disable_pagefile() -> Tweak {
         "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.".to_string(),
         TweakCategory::Memory,
         PowershellTweak {
+            id: TweakId::DisablePagefile,
             read_script: Some(
                 r#"
                 $pagefileSettings = Get-WmiObject -Class Win32_PageFileUsage | Select-Object -ExpandProperty AllocatedBaseSize
@@ -691,6 +709,7 @@ pub fn disable_speculative_execution_mitigations() -> Tweak {
         "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
         TweakCategory::Security,
         PowershellTweak {
+            id: TweakId::DisableSpeculativeExecutionMitigations,
             read_script: Some(
                 r#"
                 $featureSettingsOverride = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name FeatureSettingsOverride -ErrorAction SilentlyContinue).FeatureSettingsOverride
@@ -732,6 +751,7 @@ pub fn disable_data_execution_prevention() -> Tweak {
         "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.".to_string(),
         TweakCategory::Security,
         PowershellTweak {
+            id: TweakId::DisableDataExecutionPrevention,
             read_script: Some(
                 r#"
                 $depSettings = bcdedit /enum | Select-String 'nx'
@@ -761,6 +781,7 @@ pub fn disable_process_idle_states() -> Tweak {
         "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.".to_string(),
         TweakCategory::Power,
         PowershellTweak {
+            id: TweakId::DisableProcessIdleStates,
             read_script: Some(
                 r#"
                 # Run powercfg command and store the output
@@ -803,269 +824,6 @@ pub fn disable_process_idle_states() -> Tweak {
     )
 }
 
-pub fn kill_all_non_critical_services() -> Tweak {
-    let services = r#"@(
-        "AdobeARMservice",               # Adobe Acrobat Update Service
-        "AdobeFlashPlayerUpdateSvc",     # Adobe Flash Player Update Service
-        "AdobeUpdateService",            # Adobe Update Service
-        "AeLookupSvc",                   # Application Experience
-        "AJRouter",                      # AllJoyn Router Service
-        "ALG",                           # Application Layer Gateway Service
-        "AppIDSvc",                      # Application Identity
-        "Appinfo",                       # Application Information
-        "AppMgmt",                       # Application Management
-        "AppReadiness",                  # App Readiness
-        "AppXSvc",                       # AppX Deployment Service
-        "AssignedAccessManagerSvc",      # Assigned Access Manager Service
-        "AudioEndpointBuilder",          # Windows Audio Endpoint Builder
-        "Audiosrv",                      # Windows Audio
-        "autotimesvc",                   # Cellular Time
-        "AxInstSV",                      # ActiveX Installer
-        "BDESVC",                        # BitLocker Drive Encryption Service
-        "BluetoothUserService",          # Bluetooth User Support Service
-        "BFE",                           # Base Filtering Engine
-        "BITS",                          # Background Intelligent Transfer Service
-        "BrokerInfrastructure",          # Background Tasks Infrastructure Service
-        "Browser",                       # Computer Browser
-        "BthAvctpSvc",                   # AVCTP service
-        "camsvc",                        # Capability Access Manager Service
-        "CaptureService",                # Capability Access Manager Service
-        "CertPropSvc",                   # Certificate Propagation
-        "ClipSVC",                       # Client License Service
-        "CryptSvc",                      # Cryptographic Services
-        "defragsvc",                     # Optimize drives
-        "DevQueryBroker",                # Device Query Broker
-        "DeviceAssociationService",      # Device Association Service
-        "DevicesFlowUserSvc",            # Allows ConnectUX and PC Settings to Connect and Pair with WiFi displays and Bluetooth devices.
-        "diagnosticshub",                # Microsoft (R) Diagnostics Hub Standard Collector Service
-        "DispBrokerDesktopSvc",          # Display Policy Service
-        "Dhcp",                          # DHCP Client
-        "Dnscache",                      # DNS Client
-        "DoSvc",                         # Delivery Optimization
-        "DPS",                           # Diagnostic Policy Service
-        "DusmSvc",                       # Data Usage
-        "EFS",                           # Encrypting File System
-        "EntAppSvc",                     # Enterprise App Management Service
-        "EventLog",                      # Windows Event Log
-        "FrameServer",                   # Windows Camera Frame Server
-        "GraphicsPerfSvc",               # GraphicsPerfSvc
-        "hidserv",                       # Human Interface Device Service
-        "HvHost",                        # Hyper-V Host Compute Service
-        "icssvc",                        # Windows Mobile Hotspot Service
-        "iphlpsvc",                      # IP Helper
-        "lfsvc",                         # Geolocation Service
-        "lmhosts",                       # TCP/IP NetBIOS Helper
-        "InstallService",                # Microsoft Store Install Service
-        "irmon",                         # Infrared monitor service
-        "KeyIso",                        # CNG Key Isolation
-        "LanmanWorkstation",             # Workstation
-        "LanmanServer",                  # Server
-        "LicenseManager",                # Windows License Manager Service
-        "LxpSvc",                        # Language Experience Service
-        "LSM",                           # Local Session Manager
-        "MDCoreSvc",                     # Microsoft Defender Core Service
-        "mpssvc",                        # Windows Defender Firewall
-        "MSDTC",                         # Distributed Transaction Coordinator
-        "MSiSCSI",                       # Microsoft iSCSI Initiator Service
-        "NaturalAuthentication",         # Natural Authentication
-        "NcbService",                    # Network Connection Broker
-        "netprofm",                      # Network List Service
-        "NgcCtnrSvc",                    # Microsoft Passport Container
-        "NgcSvc",                        # Microsoft Passport
-        "NPSMSvc",                       # Now Playing Media Service
-        "nsi",                           # Network Store Interface Service
-        "NVDisplay",                     # NVIDIA Display Driver Service
-        "OneSyncSvc",                    # Synchronizes mail, contacts, calendar etc.
-        "PcaSvc",                        # Program Compatibility Assistant Service
-        "PhoneSvc",                      # Phone Service
-        "PimIndexMaintenanceSvc",        # Contact Data
-        "pla",                           # Performance Logs & Alerts
-        "PlugPlay",                      # Plug and Play
-        "PrintNotify",                   # Printer Extensions and Notifications
-        "ProfSvc",                       # User Profile Service
-        "RasMan",                        # Remote Access Connection Manager
-        "RmSvc",                         # Radio Management Service
-        "RtkAudioUniversalService",      # Realtek Audio Universal Service
-        "SamSs",                         # Security Accounts Manager
-        "SCardSvr",                      # Smart Card
-        "ScDeviceEnum",                  # Smart Card Device Enumeration Service
-        "SCPolicySvc",                   # Smart Card Removal Policy
-        "seclogon",                      # Secondary Logon
-        "SEMgrSvc",                      # Payments and NFC/SE Manager
-        "SensorDataService",             # Sensor Data Service
-        "SensorService",                 # Sensor Service
-        "SensrSvc",                      # Sensor Monitoring Service
-        "SessionEnv",                    # Remote Desktop Configuration
-        "Schedule",                      # Task Scheduler
-        "ShellHWDetection",              # Shell Hardware Detection
-        "shpamsvc",                      # Shared PC Account Manager
-        "SmsRouter",                     # Microsoft Windows SMS Router Service
-        "smphost",                       # Microsoft Storage Spaces SMP
-        "Spooler",                       # Print Spooler
-        "sppsvc",                        # Software Protection
-        "SstpSvc",                       # Secure Socket Tunneling Protocol Service
-        "SSDPSRV",                       # SSDP Discovery
-        "StateRepository",               # State Repository Service
-        "StiSvc",                        # Windows Image Acquisition
-        "StorSvc",                       # Storage Service
-        "svsvc",                         # Spot Verifier
-        "swprv",                         # Microsoft Software Shadow Copy Provider
-        "SysMain",                       # SysMain
-        "TabletInputService",            # Touch Keyboard and Handwriting Panel Service
-        "tapisrv",                       # Telephony
-        "Themes",                        # Themes
-        "TermService",                   # Remote Desktop Services
-        "TieringEngineService",          # Storage Tiers Management
-        "TimeBrokerSvc",                 # Time Broker
-        "TokenBroker",                   # Web Account Manager
-        "TrkWks",                        # Distributed Link Tracking Client
-        "TrustedInstaller",              # Windows Modules Installer
-        "UmRdpService",                  # Remote Desktop Services UserMode Port Redirector
-        "UnistoreSvc",                   # User Data Storage
-        "UserDataSvc",                   # User Data Access
-        "UserManager",                   # User Manager
-        "UsoSvc",                        # Update Orchestrator Service
-        "VaultSvc",                      # Credential Manager
-        "vds",                           # Virtual Disk
-        "VSS",                           # Volume Shadow Copy
-        "WaaSMedicSvc",                  # Windows Update Medic Service
-        "WalletService",                 # WalletService
-        "WarpJITSvc",                    # WarpJITSvc
-        "Wbiosrvc",                      # Windows Biometric Service
-        "Wcmsvc",                        # Windows Connection Manager
-        "WdiServiceHost",                # Diagnostic Service Host
-        "WdiSystemHost",                 # Diagnostic System Host
-        "WdNisSvc",                      # Windows Defender Antivirus Network Inspection Service
-        "webthreatdefusersvc",           # Web Threat Defense User Service
-        "Wecsvc",                        # Windows Event Collector
-        "WEPHOSTSVC",                    # Windows Encryption Provider Host Service
-        "WerSvc",                        # Windows Error Reporting Service
-        "WlanSvc",                       # WLAN AutoConfig
-        "wlidsvc",                       # Microsoft Account Sign-in Assistant
-        "WiaRpc",                        # Still Image Acquisition Events
-        "WinDefend",                     # Windows Defender Antivirus Service
-        "WinHttpAutoProxySvc",           # WinHTTP Web Proxy Auto-Discovery Service
-        "Winmgmt",                       # Windows Management Instrumentation
-        "wmiApSrv",                      # WMI Performance Adapter
-        "WpDBusEnum",                    # Portable Device Enumerator Service
-        "WpnService",                    # Windows Push Notifications Service
-        "WpnUserService",                # Windows Push Notifications User Service
-        "wscsvc",                        # Security Center
-        "WSearch",                       # Windows Search
-        "wuauserv",                      # Windows Update
-        "Xbox"                           # All Xbox services
-    )"#;
-
-    Tweak::powershell_tweak(
-        "Kill All Non-Critical Services".to_string(),
-        "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.".to_string(),
-        TweakCategory::Action,
-        PowershellTweak {
-            read_script: None,
-                apply_script: format!(r#"
-                    $servicePatterns = {}
-
-                    $allServices = Get-Service
-                    $failedServices = @()
-
-                    foreach ($pattern in $servicePatterns) {{
-                        $matchingServices = $allServices | Where-Object {{ $_.Name -like "*$pattern*" -or $_.DisplayName -like "*$pattern*" }}
-
-                        foreach ($service in $matchingServices) {{
-                            for ($i = 1; $i -le 5; $i++) {{
-                                if ($service.Status -ne 'Stopped') {{
-                                    try {{
-                                        Stop-Service -InputObject $service -Force -ErrorAction Stop
-                                        Write-Output "Stopped service: $($service.Name) ($($service.DisplayName))"
-                                        break
-                                    }} catch {{
-                                        Write-Output "Failed to stop service: $($service.Name) ($($service.DisplayName)). Attempt $i/5."
-                                        if ($i -eq 5) {{
-                                            $failedServices += $service.Name
-                                        }}
-                                    }}
-                                }} else {{
-                                    Write-Output "Service already stopped: $($service.Name) ($($service.DisplayName))"
-                                    break
-                                }}
-                                Start-Sleep -Seconds 2
-                            }}
-                        }}
-                    }}
-
-                    if ($failedServices.Count -gt 0) {{
-                        Write-Output "The following services failed to be stopped after 5 attempts:"
-                        foreach ($failedService in $failedServices) {{
-                            Write-Output "- $failedService"
-                        }}
-                    }} else {{
-                        Write-Output "All specified non-critical services have been successfully stopped."
-                    }}
-                    "#, services),
-            undo_script: None,  target_state: None,
-        },
-        false,
-    )
-}
-
-pub fn kill_explorer() -> Tweak {
-    Tweak::powershell_tweak(
-        "Kill Explorer".to_string(),
-        "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.".to_string(),
-        TweakCategory::Action,
-        PowershellTweak {
-            read_script: Some(r#"
-                $explorerProcesses = Get-Process explorer -ErrorAction SilentlyContinue
-                $autoRestartValue = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoRestartShell" -ErrorAction SilentlyContinue
-
-                $status = @{
-                    ExplorerRunning = $false
-                    AutoRestartEnabled = $false
-                }
-
-                if ($explorerProcesses) {
-                    $status.ExplorerRunning = $true
-                }
-
-                if ($autoRestartValue -and $autoRestartValue.AutoRestartShell -eq 1) {
-                    $status.AutoRestartEnabled = $true
-                }
-
-                return $status | ConvertTo-Json
-            "#.to_string()),
-            apply_script: r#"
-                Write-Output "Terminating Explorer process and preventing restart..."
-
-                # Kill all Explorer processes
-                taskkill /F /IM explorer.exe
-
-                # Prevent Explorer from restarting
-                New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoRestartShell" -Value 0 -PropertyType DWORD -Force
-
-                Write-Output "Explorer has been terminated and prevented from restarting."
-            "#.to_string(),
-            undo_script: Some(r#"
-                Write-Output "Allowing Explorer to restart and starting it..."
-
-                # Allow Explorer to restart automatically
-                Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoRestartShell" -Value 1
-
-                # Start Explorer
-                Start-Process explorer.exe
-
-                Write-Output "Explorer has been allowed to restart and has been started."
-            "#.to_string()),
-            target_state: Some(r#"
-                {
-                    "ExplorerRunning": false,
-                    "AutoRestartEnabled": false
-                }
-            "#.to_string()),
-        },
-        false
-    )
-}
-
 pub fn high_performance_visual_settings() -> Tweak {
     Tweak::powershell_tweak(
         "High Performance Visual Settings".to_string(),
@@ -1086,6 +844,7 @@ pub fn high_performance_visual_settings() -> Tweak {
 13. Lowers the refresh rate to 30Hz".to_string(),
         TweakCategory::Graphics,
         PowershellTweak {
+            id: TweakId::HighPerformanceVisualSettings,
             read_script: Some(r#"
                 $path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
                 $visualFxSetting = Get-ItemProperty -Path $path -Name VisualFXSetting -ErrorAction SilentlyContinue

@@ -1,5 +1,6 @@
 // src/tweaks/mod.rs
 
+pub mod definitions;
 pub mod group_policy;
 pub mod powershell;
 pub mod registry;
@@ -39,13 +40,13 @@ pub struct Tweak {
 /// Trait defining the behavior for all tweak methods.
 pub trait TweakMethod: Send + Sync {
     /// Checks if the tweak is currently enabled.
-    fn initial_state(&self, id: TweakId) -> Result<bool, Error>;
+    fn initial_state(&self) -> Result<bool, Error>;
 
     /// Applies the tweak.
-    fn apply(&self, id: TweakId) -> Result<(), Error>;
+    fn apply(&self) -> Result<(), Error>;
 
     /// Reverts the tweak.
-    fn revert(&self, id: TweakId) -> Result<(), Error>;
+    fn revert(&self) -> Result<(), Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +165,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: widget,
+            widget,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -196,16 +197,16 @@ impl Tweak {
         self.pending_reboot
     }
 
-    pub fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
-        self.method.initial_state(id)
+    pub fn initial_state(&self) -> Result<bool, anyhow::Error> {
+        self.method.initial_state()
     }
 
-    pub fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        self.method.apply(id)
+    pub fn apply(&self) -> Result<(), anyhow::Error> {
+        self.method.apply()
     }
 
-    pub fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        self.method.revert(id)
+    pub fn revert(&self) -> Result<(), anyhow::Error> {
+        self.method.revert()
     }
 }
 
@@ -257,23 +258,23 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         (TweakId::LowResMode, rust::low_res_mode()),
         (
             TweakId::LargeSystemCache,
-            registry::enable_large_system_cache(),
+            definitions::registry::enable_large_system_cache(),
         ),
         (
             TweakId::SystemResponsiveness,
-            registry::system_responsiveness(),
+            definitions::registry::system_responsiveness(),
         ),
         (
             TweakId::DisableHWAcceleration,
-            registry::disable_hw_acceleration(),
+            definitions::registry::disable_hw_acceleration(),
         ),
         (
             TweakId::Win32PrioritySeparation,
-            registry::win32_priority_separation(),
+            definitions::registry::win32_priority_separation(),
         ),
         (
             TweakId::DisableCoreParking,
-            registry::disable_core_parking(),
+            definitions::registry::disable_core_parking(),
         ),
         (
             TweakId::SeLockMemoryPrivilege,
@@ -281,17 +282,20 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::UltimatePerformancePlan,
-            powershell::enable_ultimate_performance_plan(),
+            powershell::ultimate_performance_plan(),
         ),
         (
             TweakId::NoLowDiskSpaceChecks,
-            registry::disable_low_disk_space_checks(),
+            definitions::registry::disable_low_disk_space_checks(),
         ),
         (
             TweakId::DisableNtfsTunnelling,
-            registry::disable_ntfs_tunnelling(),
+            definitions::registry::disable_ntfs_tunnelling(),
         ),
-        (TweakId::DistributeTimers, registry::distribute_timers()),
+        (
+            TweakId::DistributeTimers,
+            definitions::registry::distribute_timers(),
+        ),
         (
             TweakId::AdditionalKernelWorkerThreads,
             powershell::additional_kernel_worker_threads(),
@@ -311,11 +315,11 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::DisableApplicationTelemetry,
-            registry::disable_application_telemetry(),
+            definitions::registry::disable_application_telemetry(),
         ),
         (
             TweakId::DisableWindowsErrorReporting,
-            registry::disable_windows_error_reporting(),
+            definitions::registry::disable_windows_error_reporting(),
         ),
         (
             TweakId::DisableLocalFirewall,
@@ -323,21 +327,27 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::DontVerifyRandomDrivers,
-            registry::dont_verify_random_drivers(),
+            definitions::registry::dont_verify_random_drivers(),
         ),
         (
             TweakId::DisableDriverPaging,
-            registry::disable_driver_paging(),
+            definitions::registry::disable_driver_paging(),
         ),
-        (TweakId::DisablePrefetcher, registry::disable_prefetcher()),
+        (
+            TweakId::DisablePrefetcher,
+            definitions::registry::disable_prefetcher(),
+        ),
         (
             TweakId::DisableSuccessAuditing,
             powershell::disable_success_auditing(),
         ),
-        (TweakId::ThreadDpcDisable, registry::thread_dpc_disable()),
+        (
+            TweakId::ThreadDpcDisable,
+            definitions::registry::thread_dpc_disable(),
+        ),
         (
             TweakId::SvcHostSplitThreshold,
-            registry::svc_host_split_threshold(),
+            definitions::registry::svc_host_split_threshold(),
         ),
         (TweakId::DisablePagefile, powershell::disable_pagefile()),
         (
@@ -350,11 +360,11 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::DisableWindowsDefender,
-            registry::disable_windows_defender(),
+            definitions::registry::disable_windows_defender(),
         ),
         (
             TweakId::DisablePageFileEncryption,
-            registry::disable_page_file_encryption(),
+            definitions::registry::disable_page_file_encryption(),
         ),
         (
             TweakId::DisableProcessIdleStates,
@@ -362,14 +372,17 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::KillAllNonCriticalServices,
-            powershell::kill_all_non_critical_services(),
+            rust::kill_all_non_critical_services(),
         ),
-        (TweakId::DisableIntelTSX, registry::disable_intel_tsx()),
+        (
+            TweakId::DisableIntelTSX,
+            definitions::registry::disable_intel_tsx(),
+        ),
         (
             TweakId::DisableWindowsMaintenance,
-            registry::disable_windows_maintenance(),
+            definitions::registry::disable_windows_maintenance(),
         ),
-        (TweakId::KillExplorer, powershell::kill_explorer()),
+        (TweakId::KillExplorer, rust::kill_explorer()),
         (
             TweakId::HighPerformanceVisualSettings,
             powershell::high_performance_visual_settings(),

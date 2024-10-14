@@ -502,9 +502,6 @@ impl App for MyApp {
         if let Err(e) = self.disable_slow_mode() {
             error!("Failed to disable slow mode during exit: {:?}", e);
         }
-
-        // Close the worker pool
-        self.orchestrator.shutdown();
     }
 }
 

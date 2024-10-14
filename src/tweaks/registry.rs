@@ -1,722 +1,631 @@
-// src/tweaks/registry_tweaks.rs
+// src/tweaks/registry.rs
 
+use anyhow::{Context, Result};
+use tracing::{debug, error, info, trace};
 use winreg::{
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
     RegKey,
 };
 
-use super::{Tweak, TweakCategory};
 use crate::tweaks::{TweakId, TweakMethod};
 
-/// Represents a registry tweak, including the registry key, value name, desired value, and default value.
-/// If `default_value` is `None`, the tweak is considered enabled if the registry value exists.
-/// Reverting such a tweak involves deleting the registry value.
-#[derive(Clone, Debug)]
+/// Defines a set of modifications to the Windows registry, which in combination
+/// make up a single tweak.
+#[derive(Debug)]
 pub struct RegistryTweak {
+    /// Unique ID for the tweak
+    pub id: TweakId,
+    pub(crate) modifications: Vec<RegistryModification>,
+}
+
+/// Represents a single registry modification, including the registry key, value name, desired value, and default value.
+/// If `default_value` is `None`, the modification is considered enabled if the registry value exists.
+/// Reverting such a tweak involves deleting the registry value.
+#[derive(Debug, Clone)]
+pub struct RegistryModification {
     /// Full path of the registry key (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
     pub path: String,
     /// Name of the registry value to modify.
     pub key: String,
     /// The value to set when applying the tweak.
-    pub tweak_value: RegistryKeyValue,
+    pub target_value: RegistryKeyValue,
     /// The default value to revert to when undoing the tweak.
     /// If `None`, reverting deletes the registry value.
     pub default_value: Option<RegistryKeyValue>,
 }
 
 /// Enumeration of supported registry key value types.
+/// Currently, only `Dword` is implemented.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RegistryKeyValue {
     Dword(u32),
-    // Add other types as needed (e.g., Qword, Binary, etc.)
 }
 
 impl RegistryTweak {
-    /// Reads the current value of the specified registry key.
+    /// Parses the full registry path into hive and subkey path.
     ///
     /// # Parameters
     ///
-    /// - `id`: The unique identifier for the tweak.
+    /// - `path`: The full registry path (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
     ///
     /// # Returns
     ///
-    /// - `Ok(RegistryKeyValue)` with the current value.
-    /// - `Err(RegistryError)` if the operation fails.
-    pub fn read_current_value(&self, id: TweakId) -> Result<RegistryKeyValue, anyhow::Error> {
-        tracing::trace!("{:?} -> Reading current value of registry tweak.", id);
+    /// - `Ok((&str, &str))` containing the hive and subkey path.
+    /// - `Err(anyhow::Error)` if parsing fails.
+    fn parse_registry_path(path: &str) -> Result<(&str, &str)> {
+        let components: Vec<&str> = path.split('\\').collect();
+        if components.len() < 2 {
+            anyhow::bail!("Invalid registry path: {}", path);
+        }
+        let hive = components[0];
+        let subkey_path = &path[hive.len() + 1..]; // +1 to skip the backslash
+        Ok((hive, subkey_path))
+    }
 
-        // Extract the hive from the key path (e.g., "HKEY_LOCAL_MACHINE")
-        let hive = self
-            .path
-            .split('\\')
-            .next()
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"));
-
-        // Map the hive string to the corresponding RegKey
-        let hkey = match hive {
-            Ok("HKEY_LOCAL_MACHINE") => RegKey::predef(HKEY_LOCAL_MACHINE),
-            Ok("HKEY_CURRENT_USER") => RegKey::predef(HKEY_CURRENT_USER),
+    /// Maps the hive string to the corresponding `RegKey`.
+    ///
+    /// # Parameters
+    ///
+    /// - `hive`: The registry hive string (e.g., "HKEY_LOCAL_MACHINE").
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(RegKey)` corresponding to the hive.
+    /// - `Err(anyhow::Error)` if the hive is unsupported.
+    fn get_hkey(hive: &str) -> Result<RegKey> {
+        match hive {
+            "HKEY_LOCAL_MACHINE" => Ok(RegKey::predef(HKEY_LOCAL_MACHINE)),
+            "HKEY_CURRENT_USER" => Ok(RegKey::predef(HKEY_CURRENT_USER)),
             other => {
-                tracing::error!("Unsupported registry hive '{:?}'.", other);
-                return Err(anyhow::Error::msg(format!(
-                    "Unsupported registry hive '{:?}'.",
-                    other
-                )));
-            }
-        };
-
-        // Extract the subkey path (everything after the hive)
-        let subkey_path = self
-            .path
-            .split_once('\\')
-            .map(|(_, path)| path)
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
-
-        // Attempt to open the subkey with read permissions
-        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_READ) {
-            Ok(key) => {
-                tracing::debug!(
-                    "{:?} -> Opened registry key '{}' for reading.",
-                    id,
-                    self.path
-                );
-                key
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = ?e,
-                    "{:?} -> Failed to open registry key '{}' for reading.",
-                    id, self.path
-                );
-                return Err(anyhow::Error::from(e));
-            }
-        };
-
-        // Depending on the expected type, read the value
-        match &self.tweak_value {
-            RegistryKeyValue::Dword(_) => {
-                let val: u32 = subkey.get_value(&self.key).map_err(anyhow::Error::from)?;
-                tracing::debug!("{:?} -> Read DWORD value '{}' = {}.", id, self.key, val);
-                Ok(RegistryKeyValue::Dword(val))
+                error!("Unsupported registry hive '{}'.", other);
+                anyhow::bail!("Unsupported registry hive '{}'.", other)
             }
         }
+    }
+
+    /// Opens a subkey with specified access.
+    ///
+    /// # Parameters
+    ///
+    /// - `hive`: The registry hive.
+    /// - `subkey_path`: The subkey path within the hive.
+    /// - `access`: Access flags (e.g., `KEY_READ`, `KEY_WRITE`).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(RegKey)` if successful.
+    /// - `Err(anyhow::Error)` if opening fails.
+    fn open_subkey(&self, hive: &str, subkey_path: &str, access: u32) -> Result<RegKey> {
+        let hkey = Self::get_hkey(hive)?;
+        hkey.open_subkey_with_flags(subkey_path, access)
+            .with_context(|| {
+                format!(
+                    "Failed to open subkey '{}' with access {}",
+                    subkey_path, access
+                )
+            })
+    }
+
+    /// Creates a subkey if it doesn't exist.
+    ///
+    /// # Parameters
+    ///
+    /// - `hive`: The registry hive.
+    /// - `subkey_path`: The subkey path within the hive.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(RegKey)` corresponding to the created or opened subkey.
+    /// - `Err(anyhow::Error)` if creation fails.
+    fn create_subkey(&self, hive: &str, subkey_path: &str) -> Result<RegKey> {
+        let hkey = Self::get_hkey(hive)?;
+        let (key, disposition) = hkey
+            .create_subkey(subkey_path)
+            .with_context(|| format!("Failed to create or open subkey '{}'", subkey_path))?;
+        match disposition {
+            winreg::enums::RegDisposition::REG_CREATED_NEW_KEY => {
+                info!("{:?} -> Created new registry key '{}'.", self.id, hive);
+            }
+            winreg::enums::RegDisposition::REG_OPENED_EXISTING_KEY => {
+                debug!("{:?} -> Opened existing registry key '{}'.", self.id, hive);
+            }
+        }
+        Ok(key)
+    }
+
+    /// Sets a registry value.
+    ///
+    /// # Parameters
+    ///
+    /// - `key`: The `RegKey` to modify.
+    /// - `value_name`: The name of the registry value.
+    /// - `value`: The `RegistryKeyValue` to set.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if successful.
+    /// - `Err(anyhow::Error)` if setting fails.
+    fn set_value(&self, key: &RegKey, value_name: &str, value: &RegistryKeyValue) -> Result<()> {
+        match value {
+            RegistryKeyValue::Dword(v) => key
+                .set_value(value_name, v)
+                .with_context(|| format!("Failed to set DWORD value '{}' to '{}' ", value_name, v)),
+        }
+    }
+
+    /// Gets a registry value.
+    ///
+    /// # Parameters
+    ///
+    /// - `key`: The `RegKey` to read from.
+    /// - `value_name`: The name of the registry value.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(RegistryKeyValue))` if the value exists.
+    /// - `Ok(None)` if the value does not exist.
+    /// - `Err(anyhow::Error)` if reading fails.
+    fn get_value(&self, key: &RegKey, value_name: &str) -> Result<Option<RegistryKeyValue>> {
+        match key.get_value::<u32, &str>(value_name) {
+            Ok(val) => Ok(Some(RegistryKeyValue::Dword(val))),
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(anyhow::Error::from(e))
+                .with_context(|| format!("Failed to get value '{}'", value_name)),
+        }
+    }
+
+    /// Deletes a registry value.
+    ///
+    /// # Parameters
+    ///
+    /// - `key`: The `RegKey` to modify.
+    /// - `value_name`: The name of the registry value to delete.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if successful.
+    /// - `Err(anyhow::Error)` if deletion fails.
+    fn delete_value(&self, key: &RegKey, value_name: &str) -> Result<()> {
+        key.delete_value(value_name)
+            .with_context(|| format!("Failed to delete value '{}'", value_name))
+    }
+
+    /// Reads the current values of all registry modifications in the tweak.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Vec<RegistryKeyValue>)` with the current values.
+    /// - `Err(anyhow::Error)` if any operation fails.
+    pub fn read_current_values(&self) -> Result<Vec<RegistryKeyValue>> {
+        trace!("{:?} -> Reading current values of registry tweak.", self.id);
+        self.modifications
+            .iter()
+            .map(|modification| {
+                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                    .with_context(|| {
+                        format!("Failed to parse registry path '{}'", modification.path)
+                    })?;
+                let subkey = self
+                    .open_subkey(hive, subkey_path, KEY_READ)
+                    .with_context(|| format!("Failed to open subkey '{}'", modification.path))?;
+                let value = self
+                    .get_value(&subkey, &modification.key)
+                    .with_context(|| {
+                        format!(
+                            "Failed to read value '{}' from '{}'",
+                            modification.key, modification.path
+                        )
+                    })?
+                    .unwrap_or(RegistryKeyValue::Dword(0)); // Default to 0 if not found
+                Ok(value)
+            })
+            .collect()
+    }
+
+    /// Rolls back previously applied modifications.
+    ///
+    /// # Parameters
+    ///
+    /// - `modifications`: A slice of tuples containing the `RegistryModification` and their original values.
+    /// - `operation`: A string indicating the operation ("apply" or "revert") for logging purposes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if all rollback operations succeed.
+    /// - `Err(anyhow::Error)` if any rollback operation fails.
+    fn rollback(
+        &self,
+        modifications: &[(RegistryModification, Option<RegistryKeyValue>)],
+        operation: &str,
+    ) -> Result<()> {
+        info!(
+            "{:?} -> Initiating rollback for {} operation.",
+            self.id, operation
+        );
+        for (modification, original_value) in modifications.iter().rev() {
+            let (hive, subkey_path) =
+                Self::parse_registry_path(&modification.path).with_context(|| {
+                    format!("Failed to parse registry path '{}'", modification.path)
+                })?;
+            let subkey = match self.open_subkey(hive, subkey_path, KEY_WRITE) {
+                Ok(k) => k,
+                Err(_) => {
+                    error!("{:?} -> Registry key '{}' does not exist during rollback. Cannot revert modification '{}'.",
+                        self.id, modification.path, modification.key);
+                    anyhow::bail!(
+                        "Registry key '{}' does not exist during rollback.",
+                        modification.path
+                    );
+                }
+            };
+
+            match original_value {
+                Some(val) => {
+                    self.set_value(&subkey, &modification.key, val)
+                        .with_context(|| {
+                            format!(
+                                "Failed to restore value '{}' in '{}'",
+                                modification.key, modification.path
+                            )
+                        })?;
+                    info!(
+                        "{:?} -> Restored value '{}' to {:?} in '{}'.",
+                        self.id, modification.key, val, modification.path
+                    );
+                }
+                None => match self.delete_value(&subkey, &modification.key) {
+                    Ok(_) => {
+                        info!(
+                            "{:?} -> Deleted value '{}' in '{}'.",
+                            self.id, modification.key, modification.path
+                        );
+                    }
+                    Err(e) => {
+                        if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                            if io_error.kind() == std::io::ErrorKind::NotFound {
+                                info!("{:?} -> Value '{}' already does not exist in '{}'. No action needed.", self.id, modification.key, modification.path);
+                            } else {
+                                let error_msg = format!(
+                                    "Failed to delete value '{}' in '{}': {}",
+                                    modification.key, modification.path, e
+                                );
+                                tracing::error!("{:?} -> {}", self.id, error_msg);
+                                return Err(anyhow::Error::msg(error_msg));
+                            }
+                        } else {
+                            let error_msg = format!(
+                                "Failed to delete value '{}' in '{}': {}",
+                                modification.key, modification.path, e
+                            );
+                            tracing::error!("{:?} -> {}", self.id, error_msg);
+                            return Err(anyhow::Error::msg(error_msg));
+                        }
+                    }
+                },
+            }
+        }
+        info!(
+            "{:?} -> Successfully rolled back {} operation.",
+            self.id, operation
+        );
+        Ok(())
     }
 }
 
 impl TweakMethod for RegistryTweak {
     /// Checks if the tweak is currently enabled.
     ///
-    /// - If `default_value` is `Some(value)`, the tweak is enabled if the current registry value equals `value`.
-    /// - If `default_value` is `None`, the tweak is enabled if the registry value exists.
-    ///
-    /// # Parameters
-    ///
-    /// - `id`: The unique identifier for the tweak.
+    /// - If all of the initial values of the registry keys match the tweak's `target_values`, the tweak is enabled.
+    /// - If any of the initial values do not match the `target_values`, the tweak is disabled.
     ///
     /// # Returns
     ///
     /// - `Ok(true)` if the tweak is enabled.
     /// - `Ok(false)` if the tweak is disabled.
-    /// - `Err(RegistryError)` if an error occurs while reading the registry.
-    fn initial_state(&self, id: TweakId) -> Result<bool, anyhow::Error> {
-        tracing::info!("{:?} -> Determining if registry tweak is enabled.", id);
-        match self.read_current_value(id) {
-            Ok(current_value) => {
-                match &self.default_value {
-                    Some(default_val) => {
-                        let is_enabled = current_value != *default_val;
-                        tracing::info!(
-                            "{:?} -> Registry tweak is currently {}.",
-                            id,
-                            if is_enabled { "enabled" } else { "disabled" }
-                        );
-                        Ok(is_enabled)
-                    }
-                    None => {
-                        // If default_value is None, the tweak is enabled if the key exists
-                        tracing::info!(
-                            "{:?} -> Registry tweak is currently enabled (value exists).",
-                            id
-                        );
-                        Ok(true)
-                    }
-                }
-            }
-            Err(_) => {
-                match &self.default_value {
-                    Some(_) => {
-                        // With a default value, absence means tweak is disabled
-                        tracing::info!(
-                            "{:?} -> Registry tweak is currently disabled (value not found).",
-                            id
-                        );
-                        Ok(false)
-                    }
-                    None => {
-                        // Without a default value, absence means tweak is disabled
-                        tracing::info!(
-                            "{:?} -> Registry tweak is currently disabled (value not found).",
-                            id
-                        );
-                        Ok(false)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Applies the registry tweak by setting the specified registry value.
-    ///
-    /// # Parameters
-    ///
-    /// - `id`: The unique identifier for the tweak.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if the operation succeeds.
-    /// - `Err(RegistryError)` if the operation fails.
-    fn apply(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        tracing::info!("Applying registry tweak '{:?}'.", id);
-
-        // Extract the hive from the key path
-        let hive = self
-            .path
-            .split('\\')
-            .next()
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"))?;
-
-        // Map the hive string to the corresponding RegKey
-        let hkey = match hive {
-            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
-            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
-            other => {
-                tracing::error!("{:?} -> Unsupported registry hive '{}'.", id, other);
-                return Err(anyhow::Error::msg(format!(
-                    "Unsupported registry hive: {}",
-                    other
-                )));
-            }
-        };
-
-        // Extract the subkey path
-        let subkey_path = self
-            .path
-            .split_once('\\')
-            .map(|(_, path)| path)
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
-
-        // Attempt to open the subkey with read and write permissions
-        // If it doesn't exist, attempt to create it
-        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_READ | KEY_WRITE) {
-            Ok(key) => {
-                tracing::debug!("{:?} -> Opened registry key '{}'.", id, self.path);
-                key
-            }
-            Err(_) => {
-                // Subkey does not exist; attempt to create it
-                match hkey.create_subkey(subkey_path) {
-                    Ok((key, disposition)) => {
-                        match disposition {
-                            winreg::enums::RegDisposition::REG_CREATED_NEW_KEY => {
-                                tracing::info!(
-                                    "{:?} -> Created new registry key '{}'.",
-                                    id,
-                                    self.path
-                                );
-                            }
-                            winreg::enums::RegDisposition::REG_OPENED_EXISTING_KEY => {
-                                tracing::debug!(
-                                    "{:?} -> Opened existing registry key '{}'.",
-                                    id,
-                                    self.path
-                                );
-                            }
-                        }
-                        key
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            error = ?e,
-                            "{:?} -> Failed to create registry key '{}'.", id, self.path
-                        );
-                        return Err(anyhow::Error::msg(format!(
-                            "Failed to create registry key '{}': {}",
-                            self.path, e
-                        )));
-                    }
-                }
-            }
-        };
-
-        // Now, set the registry value based on its type
-        match &self.tweak_value {
-            RegistryKeyValue::Dword(val) => {
-                subkey.set_value(&self.key, val).map_err(|e| {
-                    anyhow::Error::msg(format!(
-                        "Failed to set DWORD value '{}' in key '{}': {}",
-                        self.key, self.path, e
-                    ))
-                })?;
-                tracing::info!("{:?} -> Set DWORD value '{}' to {}.", id, self.key, val);
-            } // Handle other types as needed
-        }
-
-        Ok(())
-    }
-
-    /// Reverts the registry tweak by restoring the default registry value or deleting it if no default is provided.
-    ///
-    /// # Parameters
-    ///
-    /// - `id`: The unique identifier for the tweak.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if the operation succeeds.
-    /// - `Err(anyhow::Error)` if the operation fails.
-    fn revert(&self, id: TweakId) -> Result<(), anyhow::Error> {
-        tracing::info!("{:?} -> Reverting registry tweak.", id);
-
-        // Extract the hive from the key path
-        let hive = self
-            .path
-            .split('\\')
-            .next()
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract hive from key path"))?;
-
-        // Map the hive string to the corresponding RegKey
-        let hkey = match hive {
-            "HKEY_LOCAL_MACHINE" => RegKey::predef(HKEY_LOCAL_MACHINE),
-            "HKEY_CURRENT_USER" => RegKey::predef(HKEY_CURRENT_USER),
-            other => {
-                tracing::error!(
-                    hive = %other,
-                    "{:?} -> Unsupported registry hive '{}'.", id,
-                    other
-                );
-                return Err(anyhow::Error::msg(format!(
-                    "Unsupported registry hive: {}",
-                    other
-                )));
-            }
-        };
-
-        // Extract the subkey path
-        let subkey_path = self
-            .path
-            .split_once('\\')
-            .map(|(_, path)| path)
-            .ok_or_else(|| anyhow::Error::msg("Failed to extract subkey path from key path"))?;
-
-        // Open the subkey with write permissions to modify the value
-        let subkey = match hkey.open_subkey_with_flags(subkey_path, KEY_WRITE) {
-            Ok(key) => {
-                tracing::debug!("{:?} -> Opened registry key for writing.", id);
-                key
-            }
+    /// - `Err(anyhow::Error)` if an error occurs while reading the registry.
+    fn initial_state(&self) -> Result<bool, anyhow::Error> {
+        info!("{:?} -> Determining if registry tweak is enabled.", self.id);
+        let current_values = match self.read_current_values() {
+            Ok(vals) => vals,
             Err(e) => {
+                // Log the error and assume tweak is disabled
                 tracing::error!(
-                    error = ?e,
-                    "{:?} -> Failed to open registry key for writing.", id
-                );
-                return Err(anyhow::Error::msg(format!(
-                    "Failed to open registry key for writing: {}",
+                    "{:?} -> Failed to read current registry values: {}. Assuming tweak is disabled.",
+                    self.id,
                     e
-                )));
+                );
+                return Ok(false);
             }
         };
 
-        match &self.default_value {
-            Some(default_val) => {
-                // Restore the registry value to its default
-                match default_val {
-                    RegistryKeyValue::Dword(val) => {
-                        subkey.set_value(&self.key, val).map_err(|e| {
-                            anyhow::Error::msg(format!(
-                                "Failed to set DWORD value '{}' in key '{}': {}",
-                                self.key, self.path, e
-                            ))
-                        })?;
-                        tracing::info!(
-                            tweak_name = %self.key,
-                            tweak_key = %self.path,
-                            "{:?} -> Reverted DWORD value '{}' to {}.",
-                            id,
-                            self.key,
-                            val
-                        );
-                    } // Handle other types as needed
-                }
-            }
-            None => {
-                // If no default value, delete the registry value
-                match subkey.delete_value(&self.key) {
-                    Ok(_) => {
-                        tracing::info!(
-                            tweak_name = %self.key,
-                            tweak_key = %self.path,
-                            "{:?} -> Deleted registry value '{}'.",
-                            id,
-                            self.key
-                        );
-                    }
-                    Err(e) => {
-                        // If the value does not exist, it's already in the default state
-                        if e.kind() == std::io::ErrorKind::NotFound {
-                            tracing::info!(
-                                tweak_name = %self.key,
-                                tweak_key = %self.path,
-                                "{:?} -> Registry value '{}' does not exist. No action needed.",
-                                id,
-                                self.key
-                            );
-                            return Ok(());
-                        } else {
-                            tracing::error!(
-                                error = ?e,
-                                "{:?} -> Failed to delete registry value '{}'.",
-                                id,
-                                self.key
-                            );
-                            return Err(anyhow::Error::msg(format!(
-                                "Failed to delete registry value '{}': {}",
-                                self.key, e
-                            )));
-                        }
-                    }
-                }
+        for (i, modification) in self.modifications.iter().enumerate() {
+            let current_value = &current_values[i];
+            let target_value = &modification.target_value;
+
+            if current_value != target_value {
+                tracing::info!(
+                    "{:?} -> Modification '{}' is disabled. Expected {:?}, found {:?}.",
+                    self.id,
+                    modification.key,
+                    target_value,
+                    current_value
+                );
+                return Ok(false); // If any value does not match, tweak is disabled
+            } else {
+                tracing::info!(
+                    "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
+                    self.id,
+                    modification.key,
+                    target_value
+                );
             }
         }
 
+        tracing::info!(
+            "{:?} -> All modifications match their target values. Tweak is enabled.",
+            self.id
+        );
+        Ok(true) // All values match, tweak is enabled
+    }
+
+    /// Applies the registry tweak by setting the specified registry values atomically.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if all operations succeed.
+    /// - `Err(anyhow::Error)` if any operation fails, after attempting rollback.
+    fn apply(&self) -> Result<(), anyhow::Error> {
+        info!("Applying registry tweak '{:?}'.", self.id);
+        let mut applied_modifications = Vec::new();
+
+        // Wrap the apply logic in a closure to handle errors and perform rollback
+        let result: Result<(), anyhow::Error> = (|| -> Result<(), anyhow::Error> {
+            for modification in &self.modifications {
+                // Extract the hive and subkey path from the registry path
+                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                    .with_context(|| {
+                        format!("Failed to parse registry path '{}'", modification.path)
+                    })?;
+
+                // Open subkey for reading original values
+                let subkey_read = match self.open_subkey(hive, subkey_path, KEY_READ) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        let error_msg = format!(
+                            "Failed to open registry key '{}' for reading: {}",
+                            modification.path, e
+                        );
+                        tracing::error!("{:?} -> {}", self.id, error_msg);
+                        return Err(anyhow::Error::msg(error_msg));
+                    }
+                };
+
+                // Read and store the original value
+                let original_value = self
+                    .get_value(&subkey_read, &modification.key)
+                    .with_context(|| {
+                        format!(
+                            "Failed to read original value '{}' from '{}'",
+                            modification.key, modification.path
+                        )
+                    })?;
+
+                // Open or create subkey for writing
+                let subkey_write = match self.open_subkey(hive, subkey_path, KEY_WRITE) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        // Subkey does not exist; attempt to create it
+                        match self.create_subkey(hive, subkey_path) {
+                            Ok(k) => k,
+                            Err(e) => {
+                                let error_msg = format!(
+                                    "Failed to create registry key '{}': {}",
+                                    modification.path, e
+                                );
+                                tracing::error!("{:?} -> {}", self.id, error_msg);
+                                return Err(anyhow::Error::msg(error_msg));
+                            }
+                        }
+                    }
+                };
+
+                // Apply the tweak value
+                self.set_value(&subkey_write, &modification.key, &modification.target_value)
+                    .with_context(|| {
+                        format!(
+                            "Failed to set value '{}' in '{}'",
+                            modification.key, modification.path
+                        )
+                    })?;
+
+                info!(
+                    "{:?} -> Set value '{}' to {:?} in '{}'.",
+                    self.id, modification.key, modification.target_value, modification.path
+                );
+
+                // Record the successfully applied modification along with its original value
+                applied_modifications.push((modification.clone(), original_value));
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            // An error occurred during apply
+            tracing::error!(
+                "{:?} -> Error occurred during apply: {}. Attempting rollback.",
+                self.id,
+                e
+            );
+
+            // Attempt to rollback
+            if let Err(rollback_err) = self.rollback(&applied_modifications, "apply") {
+                // Rollback failed
+                tracing::error!(
+                    "{:?} -> Failed to rollback after apply error: {}",
+                    self.id,
+                    rollback_err
+                );
+                // Return an error indicating both the original error and the rollback error
+                anyhow::bail!("Apply failed: {}. Rollback failed: {}", e, rollback_err);
+            } else {
+                tracing::info!(
+                    "{:?} -> Successfully rolled back after apply error.",
+                    self.id
+                );
+            }
+            // Return the original error
+            return Err(e);
+        }
+
+        tracing::info!("Successfully applied registry tweak '{:?}'.", self.id);
         Ok(())
     }
-}
 
-pub fn enable_large_system_cache() -> Tweak {
-    Tweak::registry_tweak(
-        "Large System Cache".to_string(),
-        "Optimizes system memory management by adjusting the LargeSystemCache setting."
-            .to_string(),
-            TweakCategory::Memory,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
-                .to_string(),
-            key: "LargeSystemCache".to_string(),
-            // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Windows will favor foreground applications in terms of memory allocation.
-            default_value: Some(RegistryKeyValue::Dword(0)),
-        },
-        true,
-    )
-}
+    /// Reverts the registry tweak by restoring the default registry values or deleting them if no defaults are provided, atomically.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if all operations succeed.
+    /// - `Err(anyhow::Error)` if any operation fails, after attempting rollback.
+    fn revert(&self) -> Result<(), anyhow::Error> {
+        info!("{:?} -> Reverting registry tweak.", self.id);
+        let mut reverted_modifications = Vec::new();
 
-pub fn system_responsiveness() -> Tweak {
-    Tweak::registry_tweak(
-        "System Responsiveness".to_string(),
-        "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
-            .to_string(),
-            TweakCategory::System,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile"
-                .to_string(),
-            key: "SystemResponsiveness".to_string(),
-            // Windows will favor foreground applications in terms of resource allocation.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Windows will favor background services in terms of resource allocation.
-            default_value: Some(RegistryKeyValue::Dword(20)),
-        },
-        false,
-    )
-}
+        // Wrap the revert logic in a closure to handle errors and perform rollback
+        let result: Result<(), anyhow::Error> = (|| -> Result<(), anyhow::Error> {
+            for modification in &self.modifications {
+                // Extract the hive and subkey path from the registry path
+                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                    .with_context(|| {
+                        format!("Failed to parse registry path '{}'", modification.path)
+                    })?;
 
-pub fn disable_hw_acceleration() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Hardware Acceleration".to_string(),
-        "Disables hardware acceleration for the current user.".to_string(),
-        TweakCategory::Graphics,
-        RegistryTweak {
-            path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
-            key: "DisableHWAcceleration".to_string(),
-            // Hardware acceleration is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Hardware acceleration is enabled.
-            default_value: Some(RegistryKeyValue::Dword(0)),
-        },
-        false,
-    )
-}
+                // Open subkey for reading current values before reverting
+                let subkey_read = match self.open_subkey(hive, subkey_path, KEY_READ) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        let error_msg = format!(
+                            "Failed to open registry key '{}' for reading during revert: {}",
+                            modification.path, e
+                        );
+                        tracing::error!("{:?} -> {}", self.id, error_msg);
+                        return Err(anyhow::Error::msg(error_msg));
+                    }
+                };
 
-pub fn win32_priority_separation() -> Tweak {
-    Tweak::registry_tweak(
-        "Win32PrioritySeparation".to_string(),
-        "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
-            .to_string(),
-        TweakCategory::System,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl".to_string(),
-            key: "Win32PrioritySeparation".to_string(),
-            // Foreground applications will receive priority over background services.
-            tweak_value: RegistryKeyValue::Dword(26),
-            // Background services will receive priority over foreground applications.
-            default_value: Some(RegistryKeyValue::Dword(2)),
-        },
-        false,
-    )
-}
+                // Read and store the current value before reverting
+                let current_value = self
+                    .get_value(&subkey_read, &modification.key)
+                    .with_context(|| {
+                        format!(
+                            "Failed to read current value '{}' from '{}'",
+                            modification.key, modification.path
+                        )
+                    })?;
 
-pub fn disable_core_parking() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Core Parking".to_string(),
-        "Disables core parking to improve system performance.".to_string(),
-        TweakCategory::Power,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
-            key: "ValueMax".to_string(),
-            // Core parking is disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Core parking is enabled.
-            default_value: Some(RegistryKeyValue::Dword(64)),
-        },
-        false,
-    )
-}
+                // Open or create subkey for writing
+                let subkey_write = match self.open_subkey(hive, subkey_path, KEY_WRITE) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        // Subkey does not exist; attempt to create it
+                        match self.create_subkey(hive, subkey_path) {
+                            Ok(k) => k,
+                            Err(e) => {
+                                let error_msg = format!(
+                                    "Failed to create registry key '{}': {}",
+                                    modification.path, e
+                                );
+                                tracing::error!("{:?} -> {}", self.id, error_msg);
+                                return Err(anyhow::Error::msg(error_msg));
+                            }
+                        }
+                    }
+                };
 
-pub fn disable_low_disk_space_checks() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Low Disk Space Checks".to_string(),
-        "Disables low disk space checks to prevent notifications.".to_string(),
-        TweakCategory::Storage,
-        RegistryTweak {
-            path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
-            key: "NoLowDiskSpaceChecks".to_string(),
-            // Low disk space checks are disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Low disk space checks are enabled.
-            default_value: Some(RegistryKeyValue::Dword(0)),
-        },
-        false,
-    )
-}
+                // Revert the Dword modification based on whether a default value exists
+                match &modification.default_value {
+                    Some(default_val) => match default_val {
+                        RegistryKeyValue::Dword(v) => {
+                            self.set_value(&subkey_write, &modification.key, default_val)
+                                .with_context(|| format!("Failed to restore default DWORD value '{}' in key '{}': {}", modification.key, modification.path, v))?;
+                            tracing::info!(
+                                "{:?} -> Restored value '{}' to {:?} in '{}'.",
+                                self.id,
+                                modification.key,
+                                v,
+                                modification.path
+                            );
+                        }
+                    },
+                    None => {
+                        // Delete the value as it did not exist by default
+                        match self.delete_value(&subkey_write, &modification.key) {
+                            Ok(_) => {
+                                info!(
+                                    "{:?} -> Deleted value '{}' in '{}'.",
+                                    self.id, modification.key, modification.path
+                                );
+                            }
+                            Err(e) => {
+                                if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                                    if io_error.kind() == std::io::ErrorKind::NotFound {
+                                        info!("{:?} -> Value '{}' already does not exist in '{}'. No action needed.", self.id, modification.key, modification.path);
+                                    } else {
+                                        let error_msg = format!(
+                                            "Failed to delete value '{}' in '{}': {}",
+                                            modification.key, modification.path, e
+                                        );
+                                        tracing::error!("{:?} -> {}", self.id, error_msg);
+                                        return Err(anyhow::Error::msg(error_msg));
+                                    }
+                                } else {
+                                    let error_msg = format!(
+                                        "Failed to delete value '{}' in '{}': {}",
+                                        modification.key, modification.path, e
+                                    );
+                                    tracing::error!("{:?} -> {}", self.id, error_msg);
+                                    return Err(anyhow::Error::msg(error_msg));
+                                }
+                            }
+                        }
+                    }
+                }
 
-pub fn disable_ntfs_tunnelling() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable NTFS Tunnelling".to_string(),
-        "Disables NTFS tunnelling to improve file system performance.".to_string(),
-        TweakCategory::Storage,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
-            key: "MaximumTunnelEntries".to_string(),
-            // NTFS tunnelling is disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // NTFS tunnelling is enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
+                // Record the successfully reverted modification along with its current value
+                reverted_modifications.push((modification.clone(), current_value));
+            }
+            Ok(())
+        })();
 
-pub fn distribute_timers() -> Tweak {
-    Tweak::registry_tweak(
-        "Distribute Timers".to_string(),
-        "Enables timer distribution across all cores.".to_string(),
-        TweakCategory::System,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel"
-                .to_string(),
-            key: "DistributeTimers".to_string(),
-            // Timer distribution is enabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Timer distribution is disabled.
-            default_value: None,
-        },
-        false,
-    )
-}
+        if let Err(e) = result {
+            // An error occurred during revert
+            tracing::error!(
+                "{:?} -> Error occurred during revert: {}. Attempting rollback.",
+                self.id,
+                e
+            );
 
-pub fn disable_windows_error_reporting() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Windows Error Reporting".to_string(),
-        "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.".to_string(),
-        TweakCategory::Telemetry,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting".to_string(),
-            key: "Disabled".to_string(),
-            // Windows Error Reporting is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Windows Error Reporting is enabled.
-            default_value: Some(RegistryKeyValue::Dword(0)),
-        },
-        false,
-    )
-}
+            // Attempt to rollback
+            if let Err(rollback_err) = self.rollback(&reverted_modifications, "revert") {
+                // Rollback failed
+                tracing::error!(
+                    "{:?} -> Failed to rollback after revert error: {}",
+                    self.id,
+                    rollback_err
+                );
+                // Return an error indicating both the original error and the rollback error
+                anyhow::bail!("Revert failed: {}. Rollback failed: {}", e, rollback_err);
+            } else {
+                tracing::info!(
+                    "{:?} -> Successfully rolled back after revert error.",
+                    self.id
+                );
+            }
+            // Return the original error
+            return Err(e);
+        }
 
-pub fn dont_verify_random_drivers() -> Tweak {
-    Tweak::registry_tweak(
-        "Don't Verify Random Drivers".to_string(),
-        "Disables random driver verification to improve system performance.".to_string(),
-        TweakCategory::System,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
-            key: "DontVerifyRandomDrivers".to_string(),
-            // Random driver verification is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Random driver verification is enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
-
-pub fn disable_driver_paging() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Driver Paging".to_string(),
-        "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
-        TweakCategory::Memory,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-            key: "DisablePagingExecutive".to_string(),
-            // Driver paging is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Driver paging is enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
-
-// HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters create dword EnablePrefetcher=0
-
-pub fn disable_prefetcher() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Prefetcher".to_string(),
-        "Disables the Prefetcher service to improve system performance.".to_string(),
-        TweakCategory::Memory,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters".to_string(),
-            key: "EnablePrefetcher".to_string(),
-            // Prefetcher is disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Prefetcher is enabled.
-            default_value: Some(RegistryKeyValue::Dword(3)),
-        },
-        false,
-    )
-}
-
-pub fn disable_application_telemetry() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Application Telemetry".to_string(),
-        "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
-        TweakCategory::Telemetry,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat".to_string(),
-            key: "AITEnable".to_string(),
-            // Application telemetry is disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Application telemetry is enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
-
-pub fn thread_dpc_disable() -> Tweak {
-    Tweak::registry_tweak(
-        "Thread DPC Disable".to_string(),
-        "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
-        TweakCategory::Kernel,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-            key: "ThreadDpcEnable".to_string(),
-            // Thread DPCs are disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Thread DPCs are enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
-
-pub fn svc_host_split_threshold() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable SvcHost Split".to_string(),
-        "Adjusts the SvcHost Split Threshold in KB to optimize system performance.".to_string(),
-        TweakCategory::System,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control".to_string(),
-            key: "SvcHostSplitThresholdInKB".to_string(),
-            tweak_value: RegistryKeyValue::Dword(0x0f000000),
-            default_value: None,
-        },
-        true,
-    )
-}
-
-pub fn disable_windows_defender() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Windows Defender".to_string(),
-        "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.".to_string(),
-        TweakCategory::Security,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender".to_string(),
-            key: "DisableAntiSpyware".to_string(),
-            // Windows Defender is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Windows Defender is enabled.
-            default_value: None,
-        },
-        false,
-    )
-}
-
-pub fn disable_page_file_encryption() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Page File Encryption".to_string(),
-        "Disables page file encryption to improve system performance.".to_string(),
-        TweakCategory::Memory,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem".to_string(),
-            key: "NtfsEncryptPagingFile".to_string(),
-            // Page file encryption is disabled.
-            tweak_value: RegistryKeyValue::Dword(0),
-            // Page file encryption is enabled.
-            default_value: Some(RegistryKeyValue::Dword(1)),
-        },
-        true,
-    )
-}
-
-pub fn disable_intel_tsx() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Intel TSX".to_string(),
-        "Disables Intel Transactional Synchronization Extensions (TSX) operations to mitigate potential security vulnerabilities.".to_string(),
-        TweakCategory::Security,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Kernel".to_string(),
-            key: "DisableTsx".to_string(),
-            // Intel TSX operations are disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Intel TSX operations are enabled.
-            default_value: None,
-        },
-        true,
-    )
-}
-
-pub fn disable_windows_maintenance() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable Windows Maintenance".to_string(),
-        "Disables Windows Maintenance by setting the `MaintenanceDisabled` registry value to `1`. This prevents Windows from performing maintenance tasks, such as software updates, system diagnostics, and security scans.".to_string(),
-        TweakCategory::Action,
-        RegistryTweak {
-            path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance".to_string(),
-            key: "MaintenanceDisabled".to_string(),
-            // Windows Maintenance is disabled.
-            tweak_value: RegistryKeyValue::Dword(1),
-            // Windows Maintenance is enabled.
-            default_value: None,
-        },
-        false,
-    )
+        tracing::info!("{:?} -> Successfully reverted registry tweak.", self.id);
+        Ok(())
+    }
 }
