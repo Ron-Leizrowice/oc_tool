@@ -26,7 +26,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: oc-tool
-          path: target/release/oc-tool.exe
+          path: target/release/oc_tool.exe
 
   release:
     needs: build
@@ -40,6 +40,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: oc-tool.exe
+          files: oc_tool.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

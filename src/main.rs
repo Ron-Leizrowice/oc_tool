@@ -322,7 +322,7 @@ impl MyApp {
             ui.add_space(STATUS_BAR_PADDING);
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new("v0.1.5b").font(FontId::proportional(16.0)));
+                ui.label(RichText::new("v0.1.6a").font(FontId::proportional(16.0)));
                 ui.separator();
 
                 let pending_reboot_count = self.count_tweaks_pending_reboot();
