@@ -60,8 +60,8 @@ fn set_display_settings(new_settings: DisplaySettingsType) -> i32 {
     dev_mode.dmDisplayFrequency = new_settings.refresh_rate as DWORD;
     dev_mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
 
-    let result = unsafe { ChangeDisplaySettingsW(&mut dev_mode, CDS_UPDATEREGISTRY) };
-    result
+    
+    unsafe { ChangeDisplaySettingsW(&mut dev_mode, CDS_UPDATEREGISTRY) }
 }
 
 /// Retrieves the current display settings using EnumDisplaySettingsW with ENUM_CURRENT_SETTINGS.

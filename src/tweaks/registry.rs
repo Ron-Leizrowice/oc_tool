@@ -408,7 +408,7 @@ impl TweakMethod for RegistryTweak {
                             modification.path,
                             e
                         );
-                        return Err(anyhow::Error::from(e));
+                        return Err(e);
                     }
                 }
             };
@@ -416,7 +416,7 @@ impl TweakMethod for RegistryTweak {
             if modification.default_value.is_some() {
                 // For modifications with a default value, compare the current value with the target value
                 match self.get_value(&subkey, &modification.key)? {
-                    Some(current_val) if &current_val == &modification.target_value => {
+                    Some(current_val) if current_val == modification.target_value => {
                         info!(
                             "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
                             self.id, modification.key, modification.target_value

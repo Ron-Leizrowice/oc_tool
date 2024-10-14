@@ -70,12 +70,13 @@ impl MyApp {
 
         // Initialize the current state of all tweaks
         for (id, tweak) in tweaks.iter_mut() {
-            // Submit a task to read the initial state
+            // Submit a task to read the initial state of each tweak
             let task = TweakTask {
                 id: *id,
                 method: tweak.method.clone(),
                 action: TweakAction::ReadInitialState,
             };
+            // Log an error if the task submission fails
             if let Err(e) = orchestrator.submit_task(task) {
                 tracing::error!(
                     "Failed to submit initial state task for tweak {:?}: {:?}",
@@ -98,6 +99,7 @@ impl MyApp {
         }
     }
 
+    /// Count the tweaks that are pending a system reboot.
     fn count_tweaks_pending_reboot(&self) -> usize {
         self.tweaks
             .iter()
@@ -105,18 +107,18 @@ impl MyApp {
             .count()
     }
 
-    /// Poll the orchestrator to check for any completed tasks.
+    /// Poll the orchestrator to check for any completed tasks and update tweak states.
     fn update_tweak_states(&mut self) {
         while let Some(result) = self.orchestrator.try_recv_result() {
             if let Some(tweak) = self.tweaks.get_mut(&result.id) {
                 if result.success {
                     match tweak.get_status() {
                         TweakStatus::Applying => {
-                            // Set status to Idle after applying
+                            // Set status to Idle after successfully applying the tweak
                             tweak.set_status(TweakStatus::Idle);
                         }
                         TweakStatus::Idle => {
-                            // For initial state read, set enabled state
+                            // If the initial state was read successfully, update the enabled state
                             if let Some(enabled) = result.enabled_state {
                                 tweak.set_enabled(enabled);
                             }
@@ -124,7 +126,7 @@ impl MyApp {
                         _ => {}
                     }
                 } else {
-                    // Handle error
+                    // Handle error if the task did not succeed
                     tweak.set_status(TweakStatus::Failed(
                         result.error.unwrap_or_else(|| "Unknown error".to_string()),
                     ));
@@ -144,6 +146,7 @@ impl MyApp {
         }
     }
 
+    /// Draw the main UI grid with two columns for the tweaks.
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
         // Create a two-column grid with custom spacing
         egui::Grid::new("main_columns_grid")
@@ -154,6 +157,7 @@ impl MyApp {
                 // **First Column**
                 ui.vertical(|ui| {
                     for category in TweakCategory::left() {
+                        // Draw each tweak category on the left side
                         self.draw_category_section(ui, category);
                     }
                 });
@@ -161,13 +165,14 @@ impl MyApp {
                 // **Second Column**
                 ui.vertical(|ui| {
                     for category in TweakCategory::right() {
+                        // Draw each tweak category on the right side
                         self.draw_category_section(ui, category);
                     }
                 });
             });
     }
 
-    /// Helper method to draw a single category section
+    /// Helper method to draw a single category section.
     fn draw_category_section(&mut self, ui: &mut egui::Ui, category: TweakCategory) {
         // Filter tweaks belonging to the current category
         let category_tweaks: Vec<TweakId> = self
@@ -183,6 +188,7 @@ impl MyApp {
             })
             .collect();
 
+        // If no tweaks exist for the category, return early
         if category_tweaks.is_empty() {
             return;
         }
@@ -190,160 +196,130 @@ impl MyApp {
         // Render Category Header
         ui.heading(format!("{:?} Tweaks", category));
         ui.separator();
-        ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
+        ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant for padding
 
         // Iterate over each tweak and draw using the tweak container
         for tweak_id in category_tweaks {
             self.draw_tweak_container(ui, tweak_id);
-            ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant
+            ui.add_space(CONTAINER_VERTICAL_PADDING); // Use the constant for padding
         }
 
-        ui.add_space(CONTAINER_VERTICAL_PADDING * 2.0); // Add some vertical spacing between categories
+        ui.add_space(CONTAINER_VERTICAL_PADDING * 2.0); // Add extra vertical spacing between categories
     }
 
+    /// Render the tweak container for a given tweak ID.
     fn draw_tweak_container(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
-        // Define the desired size for the tweak container
-        let desired_size = egui::vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
-
-        // Allocate a fixed-size rectangular area for the container
+        let desired_size = vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
         let (rect, _) = ui.allocate_exact_size(desired_size, Sense::hover());
-
-        // Create a child UI within the allocated rect
         let mut child_ui = ui.child_ui(
             rect,
             *ui.layout(),
             Some(egui::UiStackInfo::new(egui::UiKind::Frame)),
         );
 
-        // Render the Frame within the child UI
+        // Draw a frame around each tweak container
         egui::Frame::group(child_ui.style())
             .fill(child_ui.visuals().faint_bg_color)
             .rounding(5.0)
             .inner_margin(egui::Margin::same(CONTAINER_INTERNAL_PADDING))
             .show(&mut child_ui, |ui| {
-                // Use horizontal layout to align label left and widget right
+                // Use horizontal layout to arrange the tweak name and control widget
                 ui.horizontal(|ui| {
-                    // **Label Section**
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
-                            ui.label(
-                                egui::RichText::new(&tweak_entry.name)
-                                    .text_style(egui::TextStyle::Body)
-                                    .strong(),
-                            )
-                            .on_hover_text(&tweak_entry.description);
+                    if let Some(tweak) = self.tweaks.get(&tweak_id) {
+                        // Render the tweak label
+                        ui.label(
+                            RichText::new(&tweak.name)
+                                .text_style(egui::TextStyle::Body)
+                                .strong(),
+                        )
+                        .on_hover_text(&tweak.description);
+
+                        // Render the appropriate widget (toggle or button) based on tweak type
+                        match tweak.widget {
+                            TweakWidget::Toggle => self.draw_toggle_widget(ui, tweak_id),
+                            TweakWidget::Button => self.draw_button_widget(ui, tweak_id),
                         }
-                    });
-
-                    // **Widget Section**
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Acquire the lock briefly to get the tweak status and enabled state
-                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
-                            let tweak_status = tweak_entry.get_status();
-                            let is_enabled = tweak_entry.is_enabled();
-                            let widget_type = tweak_entry.widget.clone();
-
-
-                            match widget_type {
-                                TweakWidget::Toggle => {
-                                    // Toggle Switch Widget
-                                    let mut is_enabled_mut = is_enabled;
-                                    let response_toggle =
-                                        ui.add(toggle_switch(&mut is_enabled_mut));
-
-                                    // Handle toggle interaction
-                                    if response_toggle.changed() {
-                                        // Acquire mutable reference to tweak to set status
-                                        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
-                                            // Update the tweak's enabled state
-                                            tweak.set_enabled(is_enabled_mut);
-                                            // Set the status to Applying
-                                            tweak.set_status(TweakStatus::Applying);
-                                        }
-                                        // Dispatch the apply or revert task based on the new state
-                                        let action = if is_enabled_mut {
-                                            TweakAction::Apply
-                                        } else {
-                                            TweakAction::Revert
-                                        };
-                                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
-                                            let task = TweakTask {
-                                                id: tweak_id,
-                                                method: tweak_entry.method.clone(),
-                                                action,
-                                            };
-                                            if let Err(e) = self.orchestrator.submit_task(task) {
-                                                tracing::error!(
-                                                    "Failed to submit task for tweak {:?}: {:?}",
-                                                    tweak_id, e
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    // Handle error messages
-                                    if let TweakStatus::Failed(ref err) = tweak_status {
-                                        ui.colored_label(
-                                            egui::Color32::RED,
-                                            format!("Error: {}", err),
-                                        );
-                                    }
-                                }
-                                TweakWidget::Button => {
-                                    // Determine button state based on tweak_status
-                                    let button_state = match tweak_status {
-                                        TweakStatus::Idle | TweakStatus::Failed(_) => {
-                                            ButtonState::Default
-                                        }
-                                        TweakStatus::Applying => ButtonState::InProgress,
-                                        _ => ButtonState::Default,
-                                    };
-
-                                    // Create a mutable variable for the button state (since the widget expects &mut)
-                                    let mut button_state_mut = button_state;
-
-                                    // Add the action button widget
-                                    let response_button =
-                                        ui.add(action_button(&mut button_state_mut));
-
-                                    // Handle button click
-                                    if response_button.clicked() && button_state == ButtonState::Default {
-                                        // Acquire mutable reference to the tweak to set status to Applying
-                                        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
-                                            tweak.set_status(TweakStatus::Applying);
-                                        }
-                                        // Dispatch the apply task
-                                        if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
-                                            let task = TweakTask {
-                                                id: tweak_id,
-                                                method: tweak_entry.method.clone(),
-                                                action: TweakAction::Apply,
-                                            };
-                                            if let Err(e) = self.orchestrator.submit_task(task) {
-                                                tracing::error!("Failed to submit apply task for tweak {:?}: {:?}", tweak_id, e);
-                                            }
-                                        }
-                                    }
-
-                                    // Handle error messages
-                                    if let TweakStatus::Failed(ref err) = tweak_status {
-                                        ui.colored_label(
-                                            egui::Color32::RED,
-                                            format!("Error: {}", err),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    });
+                    }
                 });
             });
     }
 
-    /// Renders the status bar at the bottom with divisions.
+    /// Draw a toggle widget for a tweak, allowing users to enable or disable it.
+    fn draw_toggle_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
+        if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
+            let mut is_enabled = tweak_entry.is_enabled();
+            let response_toggle = ui.add(toggle_switch(&mut is_enabled));
+
+            // If the toggle was interacted with, update the tweak's status and submit a task
+            if response_toggle.changed() {
+                tweak_entry.set_enabled(is_enabled);
+                tweak_entry.set_status(TweakStatus::Applying);
+                let result = self.orchestrator.submit_task(TweakTask {
+                    id: tweak_id,
+                    method: tweak_entry.method.clone(),
+                    action: if is_enabled {
+                        TweakAction::Apply
+                    } else {
+                        TweakAction::Revert
+                    },
+                });
+                // Handle any errors during task submission
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tweak_entry.set_status(TweakStatus::Failed(e.to_string()));
+                    }
+                }
+            }
+
+            // If there was an error, display it in red text
+            if let TweakStatus::Failed(ref err) = tweak_entry.get_status() {
+                ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
+            }
+        }
+    }
+
+    /// Draw a button widget for a tweak, allowing users to apply the tweak.
+    fn draw_button_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
+        if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
+            // Determine the button state based on the tweak's status
+            let button_state = match tweak_entry.get_status() {
+                TweakStatus::Idle | TweakStatus::Failed(_) => ButtonState::Default,
+                TweakStatus::Applying => ButtonState::InProgress,
+                _ => ButtonState::Default,
+            };
+
+            let mut button_state_mut = button_state;
+            let response_button = ui.add(action_button(&mut button_state_mut));
+
+            // If the button was clicked and the tweak is idle, set the tweak status to applying
+            if response_button.clicked() && button_state == ButtonState::Default {
+                tweak_entry.set_status(TweakStatus::Applying);
+                let result = self.orchestrator.submit_task(TweakTask {
+                    id: tweak_id,
+                    method: tweak_entry.method.clone(),
+                    action: TweakAction::Apply,
+                });
+                // Handle any errors during task submission
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tweak_entry.set_status(TweakStatus::Failed(e.to_string()));
+                    }
+                }
+            }
+
+            // If there was an error, display it in red text
+            if let TweakStatus::Failed(ref err) = tweak_entry.get_status() {
+                ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
+            }
+        }
+    }
+
+    /// Renders the status bar at the bottom with information and action buttons.
     fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.add_space(STATUS_BAR_PADDING); // Apply the constant
+            ui.add_space(STATUS_BAR_PADDING); // Apply the constant padding
 
             ui.horizontal(|ui| {
                 // **Version Label**
@@ -377,7 +353,7 @@ impl MyApp {
                             YesNo::Yes,
                         ) == YesNo::Yes
                         {
-                            // Trigger system reboot
+                            // Trigger system reboot and handle any errors
                             if let Err(e) = reboot_system() {
                                 tracing::error!("Failed to initiate reboot: {:?}", e);
                                 tinyfiledialogs::message_box_ok(
@@ -442,7 +418,7 @@ impl MyApp {
                 });
             });
 
-            ui.add_space(STATUS_BAR_PADDING); // Apply the constant
+            ui.add_space(STATUS_BAR_PADDING); // Apply the constant padding
         });
     }
 }
@@ -454,7 +430,7 @@ impl App for MyApp {
         self.update_tweak_states();
 
         if !self.initial_states_loaded {
-            // Display a loading screen
+            // Display a loading screen while initial states are being read
             egui::CentralPanel::default().show(ctx, |ui| {
                 // In the loading screen UI
                 ui.vertical_centered(|ui| {
@@ -464,7 +440,7 @@ impl App for MyApp {
                 });
             });
         } else {
-            // Render the main UI
+            // Render the main UI once the initial state is loaded
             egui::CentralPanel::default().show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -473,13 +449,14 @@ impl App for MyApp {
                     });
             });
 
-            // Render the status bar
+            // Render the status bar at the bottom
             self.draw_status_bar(ctx);
         }
     }
 
     /// Handles application exit by sending a shutdown message to the worker pool.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Submit a task to revert the low-res mode tweak when exiting
         let task = TweakTask {
             id: TweakId::LowResMode,
             method: self
@@ -494,7 +471,7 @@ impl App for MyApp {
             tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
         }
 
-        // Disable slow mode
+        // Disable slow mode if it's enabled during application exit
         if let Err(e) = self.disable_slow_mode() {
             tracing::error!("Failed to disable slow mode during exit: {:?}", e);
         }
@@ -502,6 +479,7 @@ impl App for MyApp {
 }
 
 fn main() -> eframe::Result<()> {
+    // Check if the application is running with elevated privileges
     match is_elevated() {
         true => tracing::debug!("Running with elevated privileges."),
         false => {
@@ -521,6 +499,7 @@ fn main() -> eframe::Result<()> {
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .init();
 
+    // Set up window options
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT]) // Adjusted size for better layout
