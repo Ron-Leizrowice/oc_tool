@@ -1,14 +1,15 @@
 // src/main.rs
+mod orchestrator;
 mod power;
 mod tweaks;
 mod utils;
 mod widgets;
-mod worker;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
+use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tinyfiledialogs::YesNo;
 use tracing::Level;
@@ -19,7 +20,6 @@ use widgets::{
     switch::toggle_switch,
     TweakWidget,
 };
-use worker::{TaskOrchestrator, TweakAction, TweakTask};
 
 // Constants for layout and spacing
 const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
@@ -40,14 +40,11 @@ const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
 const STATUS_BAR_PADDING: f32 = 5.0; // Padding inside the status bar
 
 // Default Button Dimensions
-const BUTTON_WIDTH: f32 = 40.0;
-const BUTTON_HEIGHT: f32 = 20.0;
-
-const BUTTON_DIMENSIONS: Vec2 = vec2(BUTTON_WIDTH, BUTTON_HEIGHT);
+const BUTTON_DIMENSIONS: Vec2 = vec2(40.0, 20.0);
 
 /// Represents your application's main structure.
 pub struct MyApp {
-    pub tweaks: HashMap<TweakId, Tweak>,
+    pub tweaks: BTreeMap<TweakId, Tweak>,
     pub orchestrator: TaskOrchestrator,
 
     // Power management fields
@@ -73,8 +70,6 @@ impl MyApp {
 
         // Initialize the current state of all tweaks
         for (id, tweak) in tweaks.iter_mut() {
-            // Set initial status to Idle
-            tweak.set_status(TweakStatus::Idle);
             // Submit a task to read the initial state
             let task = TweakTask {
                 id: *id,
@@ -526,8 +521,6 @@ fn main() -> eframe::Result<()> {
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .init();
 
-    tracing::debug!("Starting Overclocking Assistant...");
-
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT]) // Adjusted size for better layout
@@ -542,10 +535,7 @@ fn main() -> eframe::Result<()> {
         eframe::run_native(
             "OC Tool",
             options,
-            Box::new(|cc| {
-                tracing::debug!("Creating MyApp instance.");
-                Ok(Box::new(MyApp::new(cc)))
-            }),
+            Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
         )
     })
 }

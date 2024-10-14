@@ -6,7 +6,7 @@ pub mod powershell;
 pub mod registry;
 pub mod rust;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Error;
 use group_policy::GroupPolicyTweak;
@@ -210,7 +210,7 @@ impl Tweak {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum TweakId {
     LargeSystemCache,
     SystemResponsiveness,
@@ -249,11 +249,12 @@ pub enum TweakId {
     KillExplorer,
     HighPerformanceVisualSettings,
     LowResMode,
+    SplitLargeCaches,
 }
 
 /// Initializes all tweaks with their respective configurations.
-pub fn all() -> HashMap<TweakId, Tweak> {
-    HashMap::from_iter(vec![
+pub fn all() -> BTreeMap<TweakId, Tweak> {
+    BTreeMap::from_iter(vec![
         (TweakId::ProcessIdleTasks, rust::process_idle_tasks()),
         (TweakId::LowResMode, rust::low_res_mode()),
         (
@@ -386,6 +387,10 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         (
             TweakId::HighPerformanceVisualSettings,
             definitions::registry::high_performance_visual_settings(),
+        ),
+        (
+            TweakId::SplitLargeCaches,
+            definitions::registry::split_large_caches(),
         ),
     ])
 }

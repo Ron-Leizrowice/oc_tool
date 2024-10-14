@@ -14,7 +14,7 @@ use windows::{
 
 use crate::tweaks::{TweakId, TweakMethod};
 
-const SERVICES_TO_KILL: [&str; 94] = [
+const SERVICES_TO_KILL: &[&str; 93] = &[
     "AdobeARMservice",           // Adobe Acrobat Update Service
     "AdobeFlashPlayerUpdateSvc", // Adobe Flash Player Update Service
     "AdobeUpdateService",        // Adobe Update Service
@@ -22,7 +22,6 @@ const SERVICES_TO_KILL: [&str; 94] = [
     "AJRouter",                  // AllJoyn Router Service
     "ALG",                       // Application Layer Gateway Service
     "AppIDSvc",                  // Application Identity
-    "Appinfo",                   // Application Information
     "AppMgmt",                   // Application Management
     "AppReadiness",              // App Readiness
     "AppXSvc",                   // AppX Deployment Service
@@ -100,13 +99,13 @@ const SERVICES_TO_KILL: [&str; 94] = [
     "SCardSvr",           // Smart Card
     "ScDeviceEnum",       // Smart Card Device Enumeration Service
     "SCPolicySvc",        // Smart Card Removal Policy
+    "Schedule",           // Task Scheduler
     "seclogon",           // Secondary Logon
     "SEMgrSvc",           // Payments and NFC/SE Manager
     "SensorDataService",  // Sensor Data Service
     "SensorService",      // Sensor Service
     "SensrSvc",           // Sensor Monitoring Service
     "SessionEnv",         // Remote Desktop Configuration
-    "Schedule",           // Task Scheduler
     "ShellHWDetection",   // Shell Hardware Detection
     "shpamsvc",           // Shared PC Account Manager
 ];
@@ -127,9 +126,124 @@ impl TweakMethod for KillNonCriticalServicesTweak {
         // Open a handle to the Service Control Manager
         unsafe {
             let scm_handle = OpenSCManagerW(
-                None, // Local machine
-                None, // ServicesActive database
-                SC_MANAGER_ALL_ACCESS,
+                None,                  // Local machine
+                None,                  // ServicesActive database
+                SC_MANAGER_ALL_ACCESS, // Full access to the service control manager
+            )
+            .map_err(|_| Error::msg("Failed to open Service Control Manager"))?;
+
+            if scm_handle.is_invalid() {
+                return Err(Error::msg("Failed to open Service Control Manager"));
+            }
+
+            // Try stopping services up to 3 times if they fail initially
+            for _ in 0..3 {
+                let mut failed_services = vec![];
+
+                for service_name in SERVICES_TO_KILL {
+                    // Convert the service name to a wide string format required by Windows API
+                    let service_name_w = U16CString::from_str(service_name)
+                        .map_err(|_| Error::msg("Failed to convert service name to wide string"))?;
+
+                    // Open the service with permissions to stop and query status
+                    let service_handle = match OpenServiceW(
+                        scm_handle,
+                        PCWSTR(service_name_w.as_ptr()),
+                        SERVICE_STOP | SERVICE_QUERY_STATUS,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(_) => {
+                            error!("Failed to open service: {}", service_name);
+                            failed_services.push(service_name);
+                            continue;
+                        }
+                    };
+
+                    if service_handle.is_invalid() {
+                        error!("Failed to open service: {}", service_name);
+                        failed_services.push(service_name);
+                        continue;
+                    }
+
+                    // Create a buffer for SERVICE_STATUS_PROCESS to hold the status information
+                    let mut buffer = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+                    let mut bytes_needed = 0;
+
+                    // Query the current status of the service
+                    let result = QueryServiceStatusEx(
+                        service_handle,
+                        SC_STATUS_PROCESS_INFO,
+                        Some(&mut buffer),
+                        &mut bytes_needed,
+                    );
+
+                    if result.is_err() {
+                        error!("Failed to query service status: {}", service_name);
+                        failed_services.push(service_name);
+                        if let Err(e) = CloseServiceHandle(service_handle) {
+                            error!("Failed to close service handle: {}", e);
+                        }
+                        continue;
+                    }
+
+                    // Interpret the buffer as SERVICE_STATUS_PROCESS structure
+                    let status =
+                        std::ptr::read_unaligned(buffer.as_ptr() as *const SERVICE_STATUS_PROCESS);
+
+                    if status.dwCurrentState == SERVICE_STOPPED {
+                        // If the service is already stopped, log and move on
+                        info!("Service already stopped: {}", service_name);
+                        if let Err(e) = CloseServiceHandle(service_handle) {
+                            error!("Failed to close service handle: {}", e);
+                        }
+                        continue;
+                    }
+
+                    // Send the stop control to the service
+                    let mut svc_status: SERVICE_STATUS = std::mem::zeroed();
+                    let result =
+                        ControlService(service_handle, SERVICE_CONTROL_STOP, &mut svc_status);
+
+                    if result.is_err() {
+                        error!("Failed to stop service: {}", service_name);
+                        failed_services.push(service_name);
+                    } else {
+                        info!("Service stopped: {}", service_name);
+                    }
+
+                    // Close the handle to the service
+                    if let Err(e) = CloseServiceHandle(service_handle) {
+                        error!("Failed to close service handle: {}", e);
+                    }
+                }
+
+                // If all services were stopped successfully, break out of the loop
+                if failed_services.is_empty() {
+                    break;
+                }
+            }
+
+            // Close the handle to the Service Control Manager
+            if let Err(e) = CloseServiceHandle(scm_handle) {
+                error!("Failed to close Service Control Manager handle: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn revert(&self) -> Result<(), Error> {
+        info!(
+            "{:?} -> Reverting non-critical services to running state.",
+            self.id
+        );
+
+        // Open a handle to the Service Control Manager
+        unsafe {
+            let scm_handle = OpenSCManagerW(
+                None,                  // Local machine
+                None,                  // ServicesActive database
+                SC_MANAGER_ALL_ACCESS, // Full access to the service control manager
             )
             .map_err(|_| Error::msg("Failed to open Service Control Manager"))?;
 
@@ -138,9 +252,11 @@ impl TweakMethod for KillNonCriticalServicesTweak {
             }
 
             for service_name in SERVICES_TO_KILL {
+                // Convert the service name to a wide string format required by Windows API
                 let service_name_w = U16CString::from_str(service_name)
                     .map_err(|_| Error::msg("Failed to convert service name to wide string"))?;
 
+                // Open the service with permissions to stop and query status
                 let service_handle = match OpenServiceW(
                     scm_handle,
                     PCWSTR(service_name_w.as_ptr()),
@@ -158,11 +274,11 @@ impl TweakMethod for KillNonCriticalServicesTweak {
                     continue;
                 }
 
-                // Create a buffer for SERVICE_STATUS_PROCESS
+                // Create a buffer for SERVICE_STATUS_PROCESS to hold the status information
                 let mut buffer = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
                 let mut bytes_needed = 0;
 
-                // Query service status
+                // Query the current status of the service
                 let result = QueryServiceStatusEx(
                     service_handle,
                     SC_STATUS_PROCESS_INFO,
@@ -178,45 +294,41 @@ impl TweakMethod for KillNonCriticalServicesTweak {
                     continue;
                 }
 
-                // Interpret buffer as SERVICE_STATUS_PROCESS
+                // Interpret the buffer as SERVICE_STATUS_PROCESS structure
                 let status =
                     std::ptr::read_unaligned(buffer.as_ptr() as *const SERVICE_STATUS_PROCESS);
 
-                if status.dwCurrentState == SERVICE_STOPPED {
-                    info!("Service already stopped: {}", service_name);
+                if status.dwCurrentState != SERVICE_STOPPED {
+                    // If the service is already running, log and move on
+                    info!("Service is already running: {}", service_name);
                     if let Err(e) = CloseServiceHandle(service_handle) {
                         error!("Failed to close service handle: {}", e);
                     }
                     continue;
                 }
 
-                // Declare a SERVICE_STATUS for ControlService
-                let mut svc_status: SERVICE_STATUS = std::mem::zeroed();
-
-                // Send stop control
-                let result = ControlService(service_handle, SERVICE_CONTROL_STOP, &mut svc_status);
+                // Start the service
+                let result =
+                    windows::Win32::System::Services::StartServiceW(service_handle, Some(&[]));
 
                 if result.is_err() {
-                    error!("Failed to stop service: {}", service_name);
+                    error!("Failed to start service: {}", service_name);
                 } else {
-                    info!("Service stopped: {}", service_name);
+                    info!("Service started: {}", service_name);
                 }
 
+                // Close the handle to the service
                 if let Err(e) = CloseServiceHandle(service_handle) {
                     error!("Failed to close service handle: {}", e);
                 }
             }
 
+            // Close the handle to the Service Control Manager
             if let Err(e) = CloseServiceHandle(scm_handle) {
                 error!("Failed to close Service Control Manager handle: {}", e);
             }
         }
 
-        Ok(())
-    }
-
-    fn revert(&self) -> Result<(), Error> {
-        // No revert action implemented
         Ok(())
     }
 }

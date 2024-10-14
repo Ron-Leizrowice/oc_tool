@@ -414,7 +414,9 @@ pub fn additional_kernel_worker_threads() -> Tweak {
 pub fn disable_speculative_execution_mitigations() -> Tweak {
     Tweak::registry_tweak(
         "Disable Speculative Execution Mitigations".to_string(),
-        "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
+        "
+Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.
+".trim().to_string(),
         TweakCategory::Security,
         RegistryTweak {
             id: TweakId::DisableSpeculativeExecutionMitigations,
@@ -440,7 +442,8 @@ pub fn disable_speculative_execution_mitigations() -> Tweak {
 pub fn high_performance_visual_settings() -> Tweak {
     Tweak::registry_tweak(
         "High Performance Visual Settings".to_string(),
-        "This tweak adjusts Windows visual settings to prioritize performance over appearance. Here's what it does:
+"
+This tweak adjusts Windows visual settings to prioritize performance over appearance:
 
 1. Sets the overall Visual Effects setting to 'Adjust for best performance'
 2. Disables transparency effects in the taskbar, Start menu, and Action Center
@@ -452,7 +455,8 @@ pub fn high_performance_visual_settings() -> Tweak {
 8. Turns off fading effects for menus and tooltips
 9. Disables font smoothing (ClearType)
 10. Turns off the shadow effect under mouse pointer
-11. Disables the shadow effect for window borders".to_string(),
+11. Disables the shadow effect for window borders
+".trim().to_string(),
         TweakCategory::Graphics,
         RegistryTweak {
             id: TweakId::HighPerformanceVisualSettings,
@@ -539,118 +543,6 @@ pub fn high_performance_visual_settings() -> Tweak {
         false, // requires reboot
     )
 }
-
-// pub fn enhanced_kernel_performance() -> Tweak {
-//     Tweak::powershell_tweak(
-//         "Enhanced Kernel Performance".to_string(),
-//         "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
-//         TweakCategory::Kernel,
-//         PowershellTweak {
-//             id: TweakId::EnhancedKernelPerformance,
-//             read_script: Some(
-//                 r#"
-//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-//                 try {
-//                     $maxDynamicTickDuration = (Get-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -ErrorAction SilentlyContinue).MaxDynamicTickDuration
-//                     $maxSharedReadyQueueSize = (Get-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -ErrorAction SilentlyContinue).MaximumSharedReadyQueueSize
-//                     $bufferSize = (Get-ItemProperty -Path $path -Name "BufferSize" -ErrorAction SilentlyContinue).BufferSize
-//                     $ioQueueWorkItem = (Get-ItemProperty -Path $path -Name "IoQueueWorkItem" -ErrorAction SilentlyContinue).IoQueueWorkItem
-//                     $ioQueueWorkItemToNode = (Get-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -ErrorAction SilentlyContinue).IoQueueWorkItemToNode
-//                     $ioQueueWorkItemEx = (Get-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -ErrorAction SilentlyContinue).IoQueueWorkItemEx
-//                     $ioQueueThreadIrp = (Get-ItemProperty -Path $path -Name "IoQueueThreadIrp" -ErrorAction SilentlyContinue).IoQueueThreadIrp
-//                     $exTryQueueWorkItem = (Get-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -ErrorAction SilentlyContinue).ExTryQueueWorkItem
-//                     $exQueueWorkItem = (Get-ItemProperty -Path $path -Name "ExQueueWorkItem" -ErrorAction SilentlyContinue).ExQueueWorkItem
-//                     $ioEnqueueIrp = (Get-ItemProperty -Path $path -Name "IoEnqueueIrp" -ErrorAction SilentlyContinue).IoEnqueueIrp
-//                     $xMMIZeroingEnable = (Get-ItemProperty -Path $path -Name "XMMIZeroingEnable" -ErrorAction SilentlyContinue).XMMIZeroingEnable
-//                     $useNormalStack = (Get-ItemProperty -Path $path -Name "UseNormalStack" -ErrorAction SilentlyContinue).UseNormalStack
-//                     $useNewEaBuffering = (Get-ItemProperty -Path $path -Name "UseNewEaBuffering" -ErrorAction SilentlyContinue).UseNewEaBuffering
-//                     $stackSubSystemStackSize = (Get-ItemProperty -Path $path -Name "StackSubSystemStackSize" -ErrorAction SilentlyContinue).StackSubSystemStackSize
-
-//                     if (
-//                         $maxDynamicTickDuration -eq 10 -and
-//                         $maxSharedReadyQueueSize -eq 128 -and
-//                         $bufferSize -eq 32 -and
-//                         $ioQueueWorkItem -eq 32 -and
-//                         $ioQueueWorkItemToNode -eq 32 -and
-//                         $ioQueueWorkItemEx -eq 32 -and
-//                         $ioQueueThreadIrp -eq 32 -and
-//                         $exTryQueueWorkItem -eq 32 -and
-//                         $exQueueWorkItem -eq 32 -and
-//                         $ioEnqueueIrp -eq 32 -and
-//                         $xMMIZeroingEnable -eq 0 -and
-//                         $useNormalStack -eq 1 -and
-//                         $useNewEaBuffering -eq 1 -and
-//                         $stackSubSystemStackSize -eq 65536
-//                     ) {
-//                         "Enabled"
-//                     } else {
-//                         "Disabled"
-//                     }
-//                 } catch {
-//                     Write-Error "Failed to read one or more registry values."
-//                 }
-//                 "#
-//                 .trim()
-//                 .to_string(),
-//             ),
-//             apply_script:
-//                 r#"
-//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-//                 try {
-//                     Set-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -Value 10 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -Value 128 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "BufferSize" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItem" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "IoQueueThreadIrp" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "ExQueueWorkItem" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "IoEnqueueIrp" -Value 32 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "XMMIZeroingEnable" -Value 0 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "UseNormalStack" -Value 1 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "UseNewEaBuffering" -Value 1 -Type DWord
-//                     Set-ItemProperty -Path $path -Name "StackSubSystemStackSize" -Value 65536 -Type DWord
-//                     Write-Output "Enhanced Kernel Performance Tweak Applied Successfully."
-//                 } catch {
-//                     Write-Error "Failed to apply Enhanced Kernel Performance Tweaks: $_"
-//                 }
-//                 "#
-//                 .trim()
-//                 .to_string()
-//             ,
-//             undo_script: Some(
-//                 r#"
-//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
-//                 try {
-//                     Remove-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "BufferSize" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItem" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "IoQueueThreadIrp" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "ExQueueWorkItem" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "IoEnqueueIrp" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "XMMIZeroingEnable" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "UseNormalStack" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "UseNewEaBuffering" -ErrorAction SilentlyContinue
-//                     Remove-ItemProperty -Path $path -Name "StackSubSystemStackSize" -ErrorAction SilentlyContinue
-//                     Write-Output "Enhanced Kernel Performance Tweaks Reverted Successfully."
-//                 } catch {
-//                     Write-Error "Failed to revert Enhanced Kernel Performance Tweaks: $_"
-//                 }
-//                 "#
-//                 .trim()
-//                 .to_string(),
-//             ),
-//             target_state: Some("Enabled".to_string()),
-//         },
-//         false,
-
-//     )
-// }
 
 pub fn enhanced_kernel_performance() -> Tweak {
     Tweak::registry_tweak(
@@ -743,6 +635,26 @@ pub fn enhanced_kernel_performance() -> Tweak {
                     key: "StackSubSystemStackSize".to_string(),
                     target_value: RegistryKeyValue::Dword(65536),
                     default_value: None,
+                },
+            ],
+        },
+        false,
+    )
+}
+
+pub fn split_large_caches() -> Tweak {
+    Tweak::registry_tweak(
+        "Split Large Caches".to_string(),
+        "This registry key is used to enable the splitting of large caches in the Windows operating system. This setting can help improve system performance by optimizing how the kernel handles large cache sizes, particularly in systems with significant memory resources.".to_string(),
+        TweakCategory::Memory,
+        RegistryTweak {
+            id: TweakId::SplitLargeCaches,
+            modifications: vec![
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "SplitLargeCaches".to_string(),
+                    target_value: RegistryKeyValue::Dword(1),
+                    default_value: Some(RegistryKeyValue::Dword(0)),
                 },
             ],
         },

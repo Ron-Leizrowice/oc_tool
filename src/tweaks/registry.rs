@@ -372,8 +372,8 @@ impl RegistryTweak {
 impl TweakMethod for RegistryTweak {
     /// Checks if the tweak is currently enabled.
     ///
-    /// - If all of the initial values of the registry keys match the tweak's `target_values`, the tweak is enabled.
-    /// - If any of the initial values do not match the `target_values`, the tweak is disabled.
+    /// - If `default_value` is `Some`, compare `current_value` with `target_value`.
+    /// - If `default_value` is `None`, check if the registry value exists.
     ///
     /// # Returns
     ///
@@ -382,47 +382,81 @@ impl TweakMethod for RegistryTweak {
     /// - `Err(anyhow::Error)` if an error occurs while reading the registry.
     fn initial_state(&self) -> Result<bool, anyhow::Error> {
         info!("{:?} -> Determining if registry tweak is enabled.", self.id);
-        let current_values = match self.read_current_values() {
-            Ok(vals) => vals,
-            Err(e) => {
-                // Log the error and assume tweak is disabled
-                tracing::error!(
-                    "{:?} -> Failed to read current registry values: {}. Assuming tweak is disabled.",
-                    self.id,
-                    e
-                );
-                return Ok(false);
-            }
-        };
 
-        for (i, modification) in self.modifications.iter().enumerate() {
-            let current_value = &current_values[i];
-            let target_value = &modification.target_value;
+        for modification in &self.modifications {
+            let (hive, subkey_path) =
+                Self::parse_registry_path(&modification.path).with_context(|| {
+                    format!("Failed to parse registry path '{}'", modification.path)
+                })?;
 
-            if current_value != target_value {
-                tracing::info!(
-                    "{:?} -> Modification '{}' is disabled. Expected {:?}, found {:?}.",
-                    self.id,
-                    modification.key,
-                    target_value,
-                    current_value
-                );
-                return Ok(false); // If any value does not match, tweak is disabled
+            // Attempt to open the subkey with read access
+            let subkey = match self.open_subkey(hive, subkey_path, KEY_READ) {
+                Ok(k) => k,
+                Err(e) => {
+                    if modification.default_value.is_none() {
+                        // If default_value is None and the key doesn't exist, the tweak is disabled
+                        info!(
+                            "{:?} -> Registry key '{}' does not exist. Modification '{}' is disabled.",
+                            self.id, modification.path, modification.key
+                        );
+                        return Ok(false);
+                    } else {
+                        // For modifications with a default value, failing to open the key is an error
+                        tracing::error!(
+                            "{:?} -> Failed to open subkey '{}': {}",
+                            self.id,
+                            modification.path,
+                            e
+                        );
+                        return Err(anyhow::Error::from(e));
+                    }
+                }
+            };
+
+            if modification.default_value.is_some() {
+                // For modifications with a default value, compare the current value with the target value
+                match self.get_value(&subkey, &modification.key)? {
+                    Some(current_val) if &current_val == &modification.target_value => {
+                        info!(
+                            "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
+                            self.id, modification.key, modification.target_value
+                        );
+                    }
+                    Some(current_val) => {
+                        info!(
+                            "{:?} -> Modification '{}' is disabled. Expected {:?}, found {:?}.",
+                            self.id, modification.key, modification.target_value, current_val
+                        );
+                        return Ok(false);
+                    }
+                    None => {
+                        info!(
+                            "{:?} -> Modification '{}' is disabled. Value does not exist.",
+                            self.id, modification.key
+                        );
+                        return Ok(false);
+                    }
+                }
             } else {
-                tracing::info!(
-                    "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
-                    self.id,
-                    modification.key,
-                    target_value
-                );
+                // For modifications without a default value, check if the registry value exists
+                let exists = self.get_value(&subkey, &modification.key)?.is_some();
+                if exists {
+                    info!(
+                        "{:?} -> Modification '{}' is enabled. Value exists.",
+                        self.id, modification.key
+                    );
+                } else {
+                    info!(
+                        "{:?} -> Modification '{}' is disabled. Value does not exist.",
+                        self.id, modification.key
+                    );
+                    return Ok(false);
+                }
             }
         }
 
-        tracing::info!(
-            "{:?} -> All modifications match their target values. Tweak is enabled.",
-            self.id
-        );
-        Ok(true) // All values match, tweak is enabled
+        info!("{:?} -> All modifications are enabled.", self.id);
+        Ok(true) // All modifications are enabled
     }
 
     /// Applies the registry tweak by setting the specified registry values atomically.
