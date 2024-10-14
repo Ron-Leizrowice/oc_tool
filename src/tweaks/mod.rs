@@ -298,7 +298,7 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::AdditionalKernelWorkerThreads,
-            powershell::additional_kernel_worker_threads(),
+            definitions::registry::additional_kernel_worker_threads(),
         ),
         (TweakId::DisableHPET, powershell::disable_hpet()),
         (
@@ -307,7 +307,7 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         ),
         (
             TweakId::EnhancedKernelPerformance,
-            powershell::enhanced_kernel_performance(),
+            definitions::registry::enhanced_kernel_performance(),
         ),
         (
             TweakId::DisableRamCompression,
@@ -352,7 +352,7 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         (TweakId::DisablePagefile, powershell::disable_pagefile()),
         (
             TweakId::DisableSpeculativeExecutionMitigations,
-            powershell::disable_speculative_execution_mitigations(),
+            definitions::registry::disable_speculative_execution_mitigations(),
         ),
         (
             TweakId::DisableDataExecutionPrevention,
@@ -385,7 +385,7 @@ pub fn all() -> HashMap<TweakId, Tweak> {
         (TweakId::KillExplorer, rust::kill_explorer()),
         (
             TweakId::HighPerformanceVisualSettings,
-            powershell::high_performance_visual_settings(),
+            definitions::registry::high_performance_visual_settings(),
         ),
     ])
 }

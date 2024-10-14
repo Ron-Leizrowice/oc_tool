@@ -3,15 +3,6 @@
 version = 3
 
 [[package]]
-name = "DisplaySettings"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d06d22db25a45e7991e4742478ead907f18aa85a98795209d5af4cb76c363426"
-dependencies = [
- "winapi",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2067,7 +2058,6 @@ dependencies = [
 name = "oc_tool"
 version = "1.0.0"
 dependencies = [
- "DisplaySettings",
  "anyhow",
  "crossbeam",
  "eframe",

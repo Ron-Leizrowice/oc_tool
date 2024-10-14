@@ -384,3 +384,368 @@ pub fn disable_windows_maintenance() -> Tweak {
         false,
     )
 }
+
+pub fn additional_kernel_worker_threads() -> Tweak {
+    Tweak::registry_tweak(
+        "Additional Worker Threads".to_string(),
+        "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.".to_string(),
+        TweakCategory::Kernel,
+        RegistryTweak {
+            id: TweakId::AdditionalKernelWorkerThreads,
+            modifications: vec![
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive".to_string(),
+                    key: "AdditionalCriticalWorkerThreads".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive".to_string(),
+                    key: "AdditionalDelayedWorkerThreads".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: None,
+                },
+            ],
+        },
+        false,
+    )
+}
+
+pub fn disable_speculative_execution_mitigations() -> Tweak {
+    Tweak::registry_tweak(
+        "Disable Speculative Execution Mitigations".to_string(),
+        "Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.".to_string(),
+        TweakCategory::Security,
+        RegistryTweak {
+            id: TweakId::DisableSpeculativeExecutionMitigations,
+            modifications: vec![
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
+                    key: "FeatureSettingsOverride".to_string(),
+                    target_value: RegistryKeyValue::Dword(3),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
+                    key: "FeatureSettingsOverrideMask".to_string(),
+                    target_value: RegistryKeyValue::Dword(3),
+                    default_value: None,
+                },
+            ],
+        },
+        true,
+    )
+}
+
+pub fn high_performance_visual_settings() -> Tweak {
+    Tweak::registry_tweak(
+        "High Performance Visual Settings".to_string(),
+        "This tweak adjusts Windows visual settings to prioritize performance over appearance. Here's what it does:
+
+1. Sets the overall Visual Effects setting to 'Adjust for best performance'
+2. Disables transparency effects in the taskbar, Start menu, and Action Center
+3. Disables animations when minimizing and maximizing windows
+4. Turns off animated controls and elements inside windows
+5. Disables Aero Peek (the feature that shows desktop previews when hovering over the Show Desktop button)
+6. Turns off live thumbnails for taskbar previews
+7. Disables smooth scrolling of list views
+8. Turns off fading effects for menus and tooltips
+9. Disables font smoothing (ClearType)
+10. Turns off the shadow effect under mouse pointer
+11. Disables the shadow effect for window borders".to_string(),
+        TweakCategory::Graphics,
+        RegistryTweak {
+            id: TweakId::HighPerformanceVisualSettings,
+            modifications: vec![
+                // 1. Set VisualFXSetting to 'Adjust for best performance' (2)
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects".to_string(),
+                    key: "VisualFXSetting".to_string(),
+                    target_value: RegistryKeyValue::Dword(2),
+                    default_value: Some(RegistryKeyValue::Dword(0)), // Default VisualFXSetting
+                },
+                // 2. Disable transparency effects
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".to_string(),
+                    key: "EnableTransparency".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+                // 3. Disable animations when minimizing/maximizing windows
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics".to_string(),
+                    key: "MinAnimate".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+                // 4. Turn off animated controls and elements inside windows
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
+                    key: "UserPreferencesMask".to_string(),
+                    target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
+                    default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
+                },
+                // 5. Disable Aero Peek
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM".to_string(),
+                    key: "EnableAeroPeek".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+                // 6. Turn off live thumbnails for taskbar previews
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".to_string(),
+                    key: "ExtendedUIHoverTime".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(400)), // Default hover time
+                },
+                // 7. Disable smooth scrolling of list views
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
+                    key: "SmoothScroll".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+                // 8. Turn off fading effects for menus and tooltips
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
+                    key: "UserPreferencesMask".to_string(),
+                    target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
+                    default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
+                },
+                // 9. Disable font smoothing (ClearType)
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
+                    key: "FontSmoothing".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(2)),
+                },
+                // 10. Turn off the shadow effect under mouse pointer
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Cursors".to_string(),
+                    key: "CursorShadow".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+                // 11. Disable the shadow effect for window borders
+                RegistryModification {
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize".to_string(),
+                    key: "EnableTransparentGlass".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: Some(RegistryKeyValue::Dword(1)),
+                },
+            ],
+        },
+        false, // requires reboot
+    )
+}
+
+// pub fn enhanced_kernel_performance() -> Tweak {
+//     Tweak::powershell_tweak(
+//         "Enhanced Kernel Performance".to_string(),
+//         "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
+//         TweakCategory::Kernel,
+//         PowershellTweak {
+//             id: TweakId::EnhancedKernelPerformance,
+//             read_script: Some(
+//                 r#"
+//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
+//                 try {
+//                     $maxDynamicTickDuration = (Get-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -ErrorAction SilentlyContinue).MaxDynamicTickDuration
+//                     $maxSharedReadyQueueSize = (Get-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -ErrorAction SilentlyContinue).MaximumSharedReadyQueueSize
+//                     $bufferSize = (Get-ItemProperty -Path $path -Name "BufferSize" -ErrorAction SilentlyContinue).BufferSize
+//                     $ioQueueWorkItem = (Get-ItemProperty -Path $path -Name "IoQueueWorkItem" -ErrorAction SilentlyContinue).IoQueueWorkItem
+//                     $ioQueueWorkItemToNode = (Get-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -ErrorAction SilentlyContinue).IoQueueWorkItemToNode
+//                     $ioQueueWorkItemEx = (Get-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -ErrorAction SilentlyContinue).IoQueueWorkItemEx
+//                     $ioQueueThreadIrp = (Get-ItemProperty -Path $path -Name "IoQueueThreadIrp" -ErrorAction SilentlyContinue).IoQueueThreadIrp
+//                     $exTryQueueWorkItem = (Get-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -ErrorAction SilentlyContinue).ExTryQueueWorkItem
+//                     $exQueueWorkItem = (Get-ItemProperty -Path $path -Name "ExQueueWorkItem" -ErrorAction SilentlyContinue).ExQueueWorkItem
+//                     $ioEnqueueIrp = (Get-ItemProperty -Path $path -Name "IoEnqueueIrp" -ErrorAction SilentlyContinue).IoEnqueueIrp
+//                     $xMMIZeroingEnable = (Get-ItemProperty -Path $path -Name "XMMIZeroingEnable" -ErrorAction SilentlyContinue).XMMIZeroingEnable
+//                     $useNormalStack = (Get-ItemProperty -Path $path -Name "UseNormalStack" -ErrorAction SilentlyContinue).UseNormalStack
+//                     $useNewEaBuffering = (Get-ItemProperty -Path $path -Name "UseNewEaBuffering" -ErrorAction SilentlyContinue).UseNewEaBuffering
+//                     $stackSubSystemStackSize = (Get-ItemProperty -Path $path -Name "StackSubSystemStackSize" -ErrorAction SilentlyContinue).StackSubSystemStackSize
+
+//                     if (
+//                         $maxDynamicTickDuration -eq 10 -and
+//                         $maxSharedReadyQueueSize -eq 128 -and
+//                         $bufferSize -eq 32 -and
+//                         $ioQueueWorkItem -eq 32 -and
+//                         $ioQueueWorkItemToNode -eq 32 -and
+//                         $ioQueueWorkItemEx -eq 32 -and
+//                         $ioQueueThreadIrp -eq 32 -and
+//                         $exTryQueueWorkItem -eq 32 -and
+//                         $exQueueWorkItem -eq 32 -and
+//                         $ioEnqueueIrp -eq 32 -and
+//                         $xMMIZeroingEnable -eq 0 -and
+//                         $useNormalStack -eq 1 -and
+//                         $useNewEaBuffering -eq 1 -and
+//                         $stackSubSystemStackSize -eq 65536
+//                     ) {
+//                         "Enabled"
+//                     } else {
+//                         "Disabled"
+//                     }
+//                 } catch {
+//                     Write-Error "Failed to read one or more registry values."
+//                 }
+//                 "#
+//                 .trim()
+//                 .to_string(),
+//             ),
+//             apply_script:
+//                 r#"
+//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
+//                 try {
+//                     Set-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -Value 10 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -Value 128 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "BufferSize" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItem" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "IoQueueThreadIrp" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "ExQueueWorkItem" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "IoEnqueueIrp" -Value 32 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "XMMIZeroingEnable" -Value 0 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "UseNormalStack" -Value 1 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "UseNewEaBuffering" -Value 1 -Type DWord
+//                     Set-ItemProperty -Path $path -Name "StackSubSystemStackSize" -Value 65536 -Type DWord
+//                     Write-Output "Enhanced Kernel Performance Tweak Applied Successfully."
+//                 } catch {
+//                     Write-Error "Failed to apply Enhanced Kernel Performance Tweaks: $_"
+//                 }
+//                 "#
+//                 .trim()
+//                 .to_string()
+//             ,
+//             undo_script: Some(
+//                 r#"
+//                 $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
+//                 try {
+//                     Remove-ItemProperty -Path $path -Name "MaxDynamicTickDuration" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "MaximumSharedReadyQueueSize" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "BufferSize" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItem" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItemToNode" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "IoQueueWorkItemEx" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "IoQueueThreadIrp" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "ExTryQueueWorkItem" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "ExQueueWorkItem" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "IoEnqueueIrp" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "XMMIZeroingEnable" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "UseNormalStack" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "UseNewEaBuffering" -ErrorAction SilentlyContinue
+//                     Remove-ItemProperty -Path $path -Name "StackSubSystemStackSize" -ErrorAction SilentlyContinue
+//                     Write-Output "Enhanced Kernel Performance Tweaks Reverted Successfully."
+//                 } catch {
+//                     Write-Error "Failed to revert Enhanced Kernel Performance Tweaks: $_"
+//                 }
+//                 "#
+//                 .trim()
+//                 .to_string(),
+//             ),
+//             target_state: Some("Enabled".to_string()),
+//         },
+//         false,
+
+//     )
+// }
+
+pub fn enhanced_kernel_performance() -> Tweak {
+    Tweak::registry_tweak(
+        "Enhanced Kernel Performance".to_string(),
+        "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
+        TweakCategory::Kernel,
+        RegistryTweak {
+            id: TweakId::EnhancedKernelPerformance,
+            modifications: vec![
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "MaxDynamicTickDuration".to_string(),
+                    target_value: RegistryKeyValue::Dword(10),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "MaximumSharedReadyQueueSize".to_string(),
+                    target_value: RegistryKeyValue::Dword(128),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "BufferSize".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "IoQueueWorkItem".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "IoQueueWorkItemToNode".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "IoQueueWorkItemEx".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "IoQueueThreadIrp".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "ExTryQueueWorkItem".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "ExQueueWorkItem".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "IoEnqueueIrp".to_string(),
+                    target_value: RegistryKeyValue::Dword(32),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "XMMIZeroingEnable".to_string(),
+                    target_value: RegistryKeyValue::Dword(0),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "UseNormalStack".to_string(),
+                    target_value: RegistryKeyValue::Dword(1),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "UseNewEaBuffering".to_string(),
+                    target_value: RegistryKeyValue::Dword(1),
+                    default_value: None,
+                },
+                RegistryModification {
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
+                    key: "StackSubSystemStackSize".to_string(),
+                    target_value: RegistryKeyValue::Dword(65536),
+                    default_value: None,
+                },
+            ],
+        },
+        false,
+    )
+}

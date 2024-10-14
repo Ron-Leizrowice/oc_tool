@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, error, info, trace};
 use winreg::{
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
-    RegKey,
+    RegKey, RegValue,
 };
 
 use crate::tweaks::{TweakId, TweakMethod};
@@ -35,10 +35,10 @@ pub struct RegistryModification {
 }
 
 /// Enumeration of supported registry key value types.
-/// Currently, only `Dword` is implemented.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RegistryKeyValue {
     Dword(u32),
+    Binary(Vec<u8>),
 }
 
 impl RegistryTweak {
@@ -124,10 +124,16 @@ impl RegistryTweak {
             .with_context(|| format!("Failed to create or open subkey '{}'", subkey_path))?;
         match disposition {
             winreg::enums::RegDisposition::REG_CREATED_NEW_KEY => {
-                info!("{:?} -> Created new registry key '{}'.", self.id, hive);
+                info!(
+                    "{:?} -> Created new registry key '{}'.",
+                    self.id, subkey_path
+                );
             }
             winreg::enums::RegDisposition::REG_OPENED_EXISTING_KEY => {
-                debug!("{:?} -> Opened existing registry key '{}'.", self.id, hive);
+                debug!(
+                    "{:?} -> Opened existing registry key '{}'.",
+                    self.id, subkey_path
+                );
             }
         }
         Ok(key)
@@ -149,7 +155,23 @@ impl RegistryTweak {
         match value {
             RegistryKeyValue::Dword(v) => key
                 .set_value(value_name, v)
-                .with_context(|| format!("Failed to set DWORD value '{}' to '{}' ", value_name, v)),
+                .with_context(|| format!("Failed to set DWORD value '{}' to '{}'", value_name, v)),
+            RegistryKeyValue::Binary(data) => {
+                // Set a Binary value
+                key.set_raw_value(
+                    value_name,
+                    &RegValue {
+                        bytes: data.clone(),
+                        vtype: winreg::enums::REG_BINARY, // Corrected field name
+                    },
+                )
+                .with_context(|| {
+                    format!(
+                        "Failed to set Binary value '{}' to '{:?}'",
+                        value_name, data
+                    )
+                })
+            }
         }
     }
 
@@ -166,11 +188,40 @@ impl RegistryTweak {
     /// - `Ok(None)` if the value does not exist.
     /// - `Err(anyhow::Error)` if reading fails.
     fn get_value(&self, key: &RegKey, value_name: &str) -> Result<Option<RegistryKeyValue>> {
+        // Attempt to read as DWORD
         match key.get_value::<u32, &str>(value_name) {
             Ok(val) => Ok(Some(RegistryKeyValue::Dword(val))),
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(ref e) if Self::is_not_found_error(e) => {
+                // If DWORD read fails due to NotFound, attempt to read as Binary
+                match key.get_raw_value(value_name) {
+                    Ok(reg_val) => {
+                        if reg_val.vtype == winreg::enums::REG_BINARY {
+                            Ok(Some(RegistryKeyValue::Binary(reg_val.bytes)))
+                        } else {
+                            // Unsupported type
+                            Err(anyhow::anyhow!(
+                                "Unsupported registry value type for '{}'",
+                                value_name
+                            ))
+                        }
+                    }
+                    Err(ref e_inner) if Self::is_not_found_error(e_inner) => Ok(None),
+                    Err(e_inner) => Err(anyhow::Error::from(e_inner)).with_context(|| {
+                        format!("Failed to get registry value '{}' as Binary", value_name)
+                    }),
+                }
+            }
             Err(e) => Err(anyhow::Error::from(e))
-                .with_context(|| format!("Failed to get value '{}'", value_name)),
+                .with_context(|| format!("Failed to get registry value '{}' as DWORD", value_name)),
+        }
+    }
+
+    /// Helper method to determine if an error is a NotFound error.
+    fn is_not_found_error(e: &(dyn std::error::Error + 'static)) -> bool {
+        if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+            io_error.kind() == std::io::ErrorKind::NotFound
+        } else {
+            false
         }
     }
 
@@ -216,7 +267,13 @@ impl RegistryTweak {
                             modification.key, modification.path
                         )
                     })?
-                    .unwrap_or(RegistryKeyValue::Dword(0)); // Default to 0 if not found
+                    .unwrap_or_else(|| {
+                        // Provide a sensible default based on the target_value's variant
+                        match modification.target_value {
+                            RegistryKeyValue::Dword(_) => RegistryKeyValue::Dword(0),
+                            RegistryKeyValue::Binary(_) => RegistryKeyValue::Binary(Vec::new()),
+                        }
+                    });
                 Ok(value)
             })
             .collect()
@@ -542,42 +599,33 @@ impl TweakMethod for RegistryTweak {
                     }
                 };
 
-                // Revert the Dword modification based on whether a default value exists
+                // Revert the modification
                 match &modification.default_value {
-                    Some(default_val) => match default_val {
-                        RegistryKeyValue::Dword(v) => {
-                            self.set_value(&subkey_write, &modification.key, default_val)
-                                .with_context(|| format!("Failed to restore default DWORD value '{}' in key '{}': {}", modification.key, modification.path, v))?;
-                            tracing::info!(
-                                "{:?} -> Restored value '{}' to {:?} in '{}'.",
-                                self.id,
-                                modification.key,
-                                v,
-                                modification.path
+                    Some(default_val) => {
+                        // Restore the default value
+                        self.set_value(&subkey_write, &modification.key, default_val)
+                            .with_context(|| {
+                                format!(
+                                    "Failed to restore default value '{}' in '{}'",
+                                    modification.key, modification.path
+                                )
+                            })?;
+                        info!(
+                            "{:?} -> Restored value '{}' to {:?} in '{}'.",
+                            self.id, modification.key, default_val, modification.path
+                        );
+                    }
+                    None => match self.delete_value(&subkey_write, &modification.key) {
+                        Ok(_) => {
+                            info!(
+                                "{:?} -> Deleted value '{}' in '{}'.",
+                                self.id, modification.key, modification.path
                             );
                         }
-                    },
-                    None => {
-                        // Delete the value as it did not exist by default
-                        match self.delete_value(&subkey_write, &modification.key) {
-                            Ok(_) => {
-                                info!(
-                                    "{:?} -> Deleted value '{}' in '{}'.",
-                                    self.id, modification.key, modification.path
-                                );
-                            }
-                            Err(e) => {
-                                if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
-                                    if io_error.kind() == std::io::ErrorKind::NotFound {
-                                        info!("{:?} -> Value '{}' already does not exist in '{}'. No action needed.", self.id, modification.key, modification.path);
-                                    } else {
-                                        let error_msg = format!(
-                                            "Failed to delete value '{}' in '{}': {}",
-                                            modification.key, modification.path, e
-                                        );
-                                        tracing::error!("{:?} -> {}", self.id, error_msg);
-                                        return Err(anyhow::Error::msg(error_msg));
-                                    }
+                        Err(e) => {
+                            if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                                if io_error.kind() == std::io::ErrorKind::NotFound {
+                                    info!("{:?} -> Value '{}' already does not exist in '{}'. No action needed.", self.id, modification.key, modification.path);
                                 } else {
                                     let error_msg = format!(
                                         "Failed to delete value '{}' in '{}': {}",
@@ -586,9 +634,16 @@ impl TweakMethod for RegistryTweak {
                                     tracing::error!("{:?} -> {}", self.id, error_msg);
                                     return Err(anyhow::Error::msg(error_msg));
                                 }
+                            } else {
+                                let error_msg = format!(
+                                    "Failed to delete value '{}' in '{}': {}",
+                                    modification.key, modification.path, e
+                                );
+                                tracing::error!("{:?} -> {}", self.id, error_msg);
+                                return Err(anyhow::Error::msg(error_msg));
                             }
                         }
-                    }
+                    },
                 }
 
                 // Record the successfully reverted modification along with its current value

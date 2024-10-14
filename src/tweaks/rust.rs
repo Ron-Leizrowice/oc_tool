@@ -11,12 +11,16 @@ use crate::widgets::TweakWidget;
 
 /// Function to create the `Low Resolution Mode` Rust tweak.
 pub fn low_res_mode() -> Tweak {
+    let method = LowResMode::default();
+
     Tweak::rust_tweak(
         "Low Resolution Mode".to_string(),
-        "Sets the display to a lower resolution to conserve resources or improve performance."
-            .to_string(),
+        format!(
+            "Sets the display to lower resolution and refresh rate to reduce GPU load and improve performance -> {}x{} @{}hz.",
+            method.target_state.width, method.target_state.height, method.target_state.refresh_rate
+        ),
         TweakCategory::Graphics,
-        LowResMode::default(),
+        method,
         TweakWidget::Toggle,
         false,
     )

@@ -24,12 +24,13 @@ winapi = { version = "0.3.9", features = [
     "winnt",
     "powersetting",
     "winbase",
+    "winuser",
+    "wingdi",
 ] }
 tracing = "0.1.40"
 eframe = "0.28.1"
 egui = "0.28.1"
 tracing-subscriber = "0.3.18"
 tinyfiledialogs = "3.9.1"
-DisplaySettings = "0.1.2"
 crossbeam = "0.8.4"
 widestring = "1.1.0"
