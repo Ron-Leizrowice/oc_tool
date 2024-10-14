@@ -4,11 +4,28 @@ pub mod definitions;
 pub mod group_policy;
 pub mod powershell;
 pub mod registry;
-pub mod rust;
 
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Error;
+use definitions::{
+    aggressive_dpc_handling, disable_data_execution_prevention, disable_hpet,
+    disable_local_firewall, disable_pagefile, disable_process_idle_states, disable_ram_compression,
+    disable_success_auditing, disable_superfetch, kill_all_non_critical_services, kill_explorer,
+    low_res_mode, process_idle_tasks,
+    registry::{
+        additional_kernel_worker_threads, disable_application_telemetry, disable_core_parking,
+        disable_driver_paging, disable_hw_acceleration, disable_intel_tsx,
+        disable_low_disk_space_checks, disable_page_file_encryption, disable_paging_combining,
+        disable_prefetcher, disable_protected_services, disable_security_accounts_manager,
+        disable_speculative_execution_mitigations, disable_windows_defender,
+        disable_windows_error_reporting, disable_windows_maintenance, dont_verify_random_drivers,
+        enable_large_system_cache, enhanced_kernel_performance, high_performance_visual_settings,
+        split_large_caches, svc_host_split_threshold, system_responsiveness, thread_dpc_disable,
+        win32_priority_separation,
+    },
+    ultimate_performance_plan,
+};
 use group_policy::GroupPolicyTweak;
 use powershell::PowershellTweak;
 use registry::RegistryTweak;
@@ -236,147 +253,99 @@ pub enum TweakId {
 /// Initializes all tweaks with their respective configurations.
 pub fn all() -> BTreeMap<TweakId, Tweak> {
     BTreeMap::from_iter(vec![
-        (TweakId::ProcessIdleTasks, rust::process_idle_tasks()),
-        (TweakId::LowResMode, rust::low_res_mode()),
-        (
-            TweakId::LargeSystemCache,
-            definitions::registry::enable_large_system_cache(),
-        ),
-        (
-            TweakId::SystemResponsiveness,
-            definitions::registry::system_responsiveness(),
-        ),
-        (
-            TweakId::DisableHWAcceleration,
-            definitions::registry::disable_hw_acceleration(),
-        ),
+        (TweakId::ProcessIdleTasks, process_idle_tasks()),
+        (TweakId::LowResMode, low_res_mode()),
+        (TweakId::LargeSystemCache, enable_large_system_cache()),
+        (TweakId::SystemResponsiveness, system_responsiveness()),
+        (TweakId::DisableHWAcceleration, disable_hw_acceleration()),
         (
             TweakId::Win32PrioritySeparation,
-            definitions::registry::win32_priority_separation(),
+            win32_priority_separation(),
         ),
-        (
-            TweakId::DisableCoreParking,
-            definitions::registry::disable_core_parking(),
-        ),
+        (TweakId::DisableCoreParking, disable_core_parking()),
         (
             TweakId::SeLockMemoryPrivilege,
             group_policy::se_lock_memory_privilege(),
         ),
         (
             TweakId::UltimatePerformancePlan,
-            powershell::ultimate_performance_plan(),
+            ultimate_performance_plan(),
         ),
         (
             TweakId::NoLowDiskSpaceChecks,
-            definitions::registry::disable_low_disk_space_checks(),
+            disable_low_disk_space_checks(),
         ),
         (
             TweakId::AdditionalKernelWorkerThreads,
-            definitions::registry::additional_kernel_worker_threads(),
+            additional_kernel_worker_threads(),
         ),
-        (TweakId::DisableHPET, powershell::disable_hpet()),
-        (
-            TweakId::AggressiveDpcHandling,
-            powershell::aggressive_dpc_handling(),
-        ),
+        (TweakId::DisableHPET, disable_hpet()),
+        (TweakId::AggressiveDpcHandling, aggressive_dpc_handling()),
         (
             TweakId::EnhancedKernelPerformance,
-            definitions::registry::enhanced_kernel_performance(),
+            enhanced_kernel_performance(),
         ),
-        (
-            TweakId::DisableRamCompression,
-            powershell::disable_ram_compression(),
-        ),
+        (TweakId::DisableRamCompression, disable_ram_compression()),
         (
             TweakId::DisableApplicationTelemetry,
-            definitions::registry::disable_application_telemetry(),
+            disable_application_telemetry(),
         ),
         (
             TweakId::DisableWindowsErrorReporting,
-            definitions::registry::disable_windows_error_reporting(),
+            disable_windows_error_reporting(),
         ),
-        (
-            TweakId::DisableLocalFirewall,
-            powershell::disable_local_firewall(),
-        ),
+        (TweakId::DisableLocalFirewall, disable_local_firewall()),
         (
             TweakId::DontVerifyRandomDrivers,
-            definitions::registry::dont_verify_random_drivers(),
+            dont_verify_random_drivers(),
         ),
-        (
-            TweakId::DisableDriverPaging,
-            definitions::registry::disable_driver_paging(),
-        ),
-        (
-            TweakId::DisablePrefetcher,
-            definitions::registry::disable_prefetcher(),
-        ),
-        (
-            TweakId::DisableSuccessAuditing,
-            powershell::disable_success_auditing(),
-        ),
-        (
-            TweakId::ThreadDpcDisable,
-            definitions::registry::thread_dpc_disable(),
-        ),
-        (
-            TweakId::SvcHostSplitThreshold,
-            definitions::registry::svc_host_split_threshold(),
-        ),
-        (TweakId::DisablePagefile, powershell::disable_pagefile()),
+        (TweakId::DisableDriverPaging, disable_driver_paging()),
+        (TweakId::DisablePrefetcher, disable_prefetcher()),
+        (TweakId::DisableSuccessAuditing, disable_success_auditing()),
+        (TweakId::ThreadDpcDisable, thread_dpc_disable()),
+        (TweakId::SvcHostSplitThreshold, svc_host_split_threshold()),
+        (TweakId::DisablePagefile, disable_pagefile()),
         (
             TweakId::DisableSpeculativeExecutionMitigations,
-            definitions::registry::disable_speculative_execution_mitigations(),
+            disable_speculative_execution_mitigations(),
         ),
         (
             TweakId::DisableDataExecutionPrevention,
-            powershell::disable_data_execution_prevention(),
+            disable_data_execution_prevention(),
         ),
-        (
-            TweakId::DisableWindowsDefender,
-            definitions::registry::disable_windows_defender(),
-        ),
+        (TweakId::DisableWindowsDefender, disable_windows_defender()),
         (
             TweakId::DisablePageFileEncryption,
-            definitions::registry::disable_page_file_encryption(),
+            disable_page_file_encryption(),
         ),
         (
             TweakId::DisableProcessIdleStates,
-            powershell::disable_process_idle_states(),
+            disable_process_idle_states(),
         ),
         (
             TweakId::KillAllNonCriticalServices,
-            rust::kill_all_non_critical_services(),
+            kill_all_non_critical_services(),
         ),
-        (
-            TweakId::DisableIntelTSX,
-            definitions::registry::disable_intel_tsx(),
-        ),
+        (TweakId::DisableIntelTSX, disable_intel_tsx()),
         (
             TweakId::DisableWindowsMaintenance,
-            definitions::registry::disable_windows_maintenance(),
+            disable_windows_maintenance(),
         ),
-        (TweakId::KillExplorer, rust::kill_explorer()),
+        (TweakId::KillExplorer, kill_explorer()),
         (
             TweakId::HighPerformanceVisualSettings,
-            definitions::registry::high_performance_visual_settings(),
+            high_performance_visual_settings(),
         ),
-        (
-            TweakId::SplitLargeCaches,
-            definitions::registry::split_large_caches(),
-        ),
+        (TweakId::SplitLargeCaches, split_large_caches()),
         (
             TweakId::DisableProtectedServices,
-            definitions::registry::disable_protected_services(),
+            disable_protected_services(),
         ),
         (
             TweakId::DisableSecurityAccountsManager,
-            definitions::registry::disable_security_accounts_manager(),
+            disable_security_accounts_manager(),
         ),
-        (
-            TweakId::DisablePagingCombining,
-            definitions::registry::disable_paging_combining(),
-        ),
-        (TweakId::DisableSuperfetch, powershell::disable_superfetch()),
+        (TweakId::DisablePagingCombining, disable_paging_combining()),
+        (TweakId::DisableSuperfetch, disable_superfetch()),
     ])
 }
