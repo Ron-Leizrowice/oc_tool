@@ -74,12 +74,12 @@ pub enum TweakCategory {
 
 impl TweakCategory {
     pub fn left() -> Vec<Self> {
-        vec![Self::System, Self::Kernel, Self::Memory, Self::Storage]
+        vec![Self::System, Self::Kernel, Self::Memory, Self::Graphics]
     }
 
     pub fn right() -> Vec<Self> {
         vec![
-            Self::Graphics,
+            Self::Storage,
             Self::Power,
             Self::Security,
             Self::Telemetry,
@@ -176,30 +176,6 @@ impl Tweak {
         }
     }
 
-    pub fn get_status(&self) -> TweakStatus {
-        self.status.clone()
-    }
-
-    pub fn set_status(&mut self, status: TweakStatus) {
-        self.status = status;
-    }
-
-    pub fn set_enabled(&mut self, value: bool) {
-        self.enabled = value;
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn set_pending_reboot(&mut self, value: bool) {
-        self.pending_reboot = value;
-    }
-
-    pub fn is_pending_reboot(&self) -> bool {
-        self.pending_reboot
-    }
-
     pub fn initial_state(&self) -> Result<bool, anyhow::Error> {
         self.method.initial_state()
     }
@@ -224,8 +200,6 @@ pub enum TweakId {
     SeLockMemoryPrivilege,
     UltimatePerformancePlan,
     NoLowDiskSpaceChecks,
-    DisableNtfsTunnelling,
-    DistributeTimers,
     AdditionalKernelWorkerThreads,
     DisableHPET,
     AggressiveDpcHandling,
@@ -295,14 +269,6 @@ pub fn all() -> BTreeMap<TweakId, Tweak> {
         (
             TweakId::NoLowDiskSpaceChecks,
             definitions::registry::disable_low_disk_space_checks(),
-        ),
-        (
-            TweakId::DisableNtfsTunnelling,
-            definitions::registry::disable_ntfs_tunnelling(),
-        ),
-        (
-            TweakId::DistributeTimers,
-            definitions::registry::distribute_timers(),
         ),
         (
             TweakId::AdditionalKernelWorkerThreads,

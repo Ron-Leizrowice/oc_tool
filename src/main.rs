@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod orchestrator;
 mod power;
 mod tweaks;
@@ -100,21 +102,21 @@ impl MyApp {
         while let Some(result) = self.orchestrator.try_recv_result() {
             if let Some(tweak) = self.tweaks.get_mut(&result.id) {
                 if result.success {
-                    match tweak.get_status() {
+                    match tweak.status {
                         TweakStatus::Applying => {
-                            tweak.set_status(TweakStatus::Idle);
+                            tweak.status = TweakStatus::Idle;
                         }
                         TweakStatus::Idle => {
                             if let Some(enabled) = result.enabled_state {
-                                tweak.set_enabled(enabled);
+                                tweak.enabled = enabled;
                             }
                         }
                         _ => {}
                     }
                 } else {
-                    tweak.set_status(TweakStatus::Failed(
+                    tweak.status = TweakStatus::Failed(
                         result.error.unwrap_or_else(|| "Unknown error".to_string()),
-                    ));
+                    );
                 }
             }
 
@@ -126,6 +128,26 @@ impl MyApp {
                     self.initial_states_loaded = true;
                 }
             }
+        }
+    }
+
+    fn cleanup(&mut self) {
+        let task = TweakTask {
+            id: TweakId::LowResMode,
+            method: self
+                .tweaks
+                .get(&TweakId::LowResMode)
+                .unwrap()
+                .method
+                .clone(),
+            action: TweakAction::Revert,
+        };
+        if let Err(e) = self.orchestrator.submit_task(task) {
+            tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
+        }
+
+        if let Err(e) = self.disable_slow_mode() {
+            tracing::error!("Failed to disable slow mode during exit: {:?}", e);
         }
     }
 
@@ -189,15 +211,13 @@ impl MyApp {
         );
 
         // First, get an immutable reference to the tweak data
-        let tweak_data = if let Some(tweak) = self.tweaks.get(&tweak_id) {
-            Some((
+        let tweak_data = self.tweaks.get(&tweak_id).map(|tweak| {
+            (
                 tweak.name.clone(),
                 tweak.description.clone(),
                 tweak.widget.clone(),
-            ))
-        } else {
-            None
-        };
+            )
+        });
 
         if let Some((tweak_name, tweak_description, tweak_widget)) = tweak_data {
             // Now use the tweak data to create the UI
@@ -233,12 +253,15 @@ impl MyApp {
 
     fn draw_toggle_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
         if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
-            let mut is_enabled = tweak_entry.is_enabled();
+            let mut is_enabled = tweak_entry.enabled;
             let response_toggle = ui.add(toggle_switch(&mut is_enabled));
 
             if response_toggle.changed() {
-                tweak_entry.set_enabled(is_enabled);
-                tweak_entry.set_status(TweakStatus::Applying);
+                tweak_entry.enabled = is_enabled;
+                if tweak_entry.requires_reboot {
+                    tweak_entry.pending_reboot = true;
+                }
+                tweak_entry.status = TweakStatus::Applying;
                 let result = self.orchestrator.submit_task(TweakTask {
                     id: tweak_id,
                     method: tweak_entry.method.clone(),
@@ -251,12 +274,12 @@ impl MyApp {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        tweak_entry.set_status(TweakStatus::Failed(e.to_string()));
+                        tweak_entry.status = TweakStatus::Failed(e.to_string());
                     }
                 }
             }
 
-            if let TweakStatus::Failed(ref err) = tweak_entry.get_status() {
+            if let TweakStatus::Failed(ref err) = tweak_entry.status {
                 ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
             }
         }
@@ -264,7 +287,7 @@ impl MyApp {
 
     fn draw_button_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
         if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
-            let button_state = match tweak_entry.get_status() {
+            let button_state = match tweak_entry.status {
                 TweakStatus::Idle | TweakStatus::Failed(_) => ButtonState::Default,
                 TweakStatus::Applying => ButtonState::InProgress,
                 _ => ButtonState::Default,
@@ -274,7 +297,7 @@ impl MyApp {
             let response_button = ui.add(action_button(&mut button_state_mut));
 
             if response_button.clicked() && button_state == ButtonState::Default {
-                tweak_entry.set_status(TweakStatus::Applying);
+                tweak_entry.status = TweakStatus::Applying;
                 let result = self.orchestrator.submit_task(TweakTask {
                     id: tweak_id,
                     method: tweak_entry.method.clone(),
@@ -283,12 +306,12 @@ impl MyApp {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        tweak_entry.set_status(TweakStatus::Failed(e.to_string()));
+                        tweak_entry.status = TweakStatus::Failed(e.to_string());
                     }
                 }
             }
 
-            if let TweakStatus::Failed(ref err) = tweak_entry.get_status() {
+            if let TweakStatus::Failed(ref err) = tweak_entry.status {
                 ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
             }
         }
@@ -299,7 +322,7 @@ impl MyApp {
             ui.add_space(STATUS_BAR_PADDING);
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new("v0.1.4a").font(FontId::proportional(16.0)));
+                ui.label(RichText::new("v0.1.5a").font(FontId::proportional(16.0)));
                 ui.separator();
 
                 let pending_reboot_count = self.count_tweaks_pending_reboot();
@@ -322,10 +345,26 @@ impl MyApp {
                         match reboot_into_bios() {
                             Ok(_) => {
                                 tracing::debug!("Rebooting into BIOS settings...");
+                                self.cleanup();
                             }
                             Err(e) => {
                                 tracing::error!("Failed to reboot into BIOS: {:?}", e);
                             }
+                        }
+                    }
+
+                    if ui
+                        .add(Button::new("Restart Windows").min_size(BUTTON_DIMENSIONS))
+                        .clicked()
+                    {
+                        self.cleanup();
+                        if let Err(e) = reboot_system() {
+                            tracing::error!("Failed to initiate reboot: {:?}", e);
+                            tinyfiledialogs::message_box_ok(
+                                "Overclocking Assistant",
+                                &format!("Failed to reboot the system: {:?}", e),
+                                tinyfiledialogs::MessageBoxIcon::Error,
+                            );
                         }
                     }
 
@@ -358,20 +397,6 @@ impl MyApp {
                                     tracing::error!("Failed to disable slow mode: {:?}", e);
                                 }
                             },
-                        }
-                    }
-
-                    if ui
-                        .add(Button::new("Restart Windows").min_size(BUTTON_DIMENSIONS))
-                        .clicked()
-                    {
-                        if let Err(e) = reboot_system() {
-                            tracing::error!("Failed to initiate reboot: {:?}", e);
-                            tinyfiledialogs::message_box_ok(
-                                "Overclocking Assistant",
-                                &format!("Failed to reboot the system: {:?}", e),
-                                tinyfiledialogs::MessageBoxIcon::Error,
-                            );
                         }
                     }
                 });
@@ -408,23 +433,7 @@ impl App for MyApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let task = TweakTask {
-            id: TweakId::LowResMode,
-            method: self
-                .tweaks
-                .get(&TweakId::LowResMode)
-                .unwrap()
-                .method
-                .clone(),
-            action: TweakAction::Revert,
-        };
-        if let Err(e) = self.orchestrator.submit_task(task) {
-            tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
-        }
-
-        if let Err(e) = self.disable_slow_mode() {
-            tracing::error!("Failed to disable slow mode during exit: {:?}", e);
-        }
+        self.cleanup();
     }
 }
 

@@ -130,45 +130,6 @@ pub fn disable_low_disk_space_checks() -> Tweak {
     )
 }
 
-pub fn disable_ntfs_tunnelling() -> Tweak {
-    Tweak::registry_tweak(
-        "Disable NTFS Tunnelling".to_string(),
-        "Disables NTFS tunnelling to improve file system performance.".to_string(),
-        TweakCategory::Storage,
-        RegistryTweak {
-            id: TweakId::DisableNtfsTunnelling,
-            modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem"
-                    .to_string(),
-                key: "MaximumTunnelEntries".to_string(),
-                target_value: RegistryKeyValue::Dword(0),
-                default_value: None,
-            }],
-        },
-        false, // requires reboot
-    )
-}
-
-pub fn distribute_timers() -> Tweak {
-    Tweak::registry_tweak(
-        "Distribute Timers".to_string(),
-        "Enables timer distribution across all cores.".to_string(),
-        TweakCategory::System,
-        RegistryTweak {
-            id: TweakId::DistributeTimers,
-            modifications: vec![
-                RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "DistributeTimers".to_string(),
-                    target_value: RegistryKeyValue::Dword(1),
-                    default_value: None,
-                },
-            ],
-        },
-        false,
-    )
-}
-
 pub fn disable_windows_error_reporting() -> Tweak {
     Tweak::registry_tweak(
         "Disable Windows Error Reporting".to_string(),

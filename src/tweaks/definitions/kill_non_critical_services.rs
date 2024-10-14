@@ -1,5 +1,11 @@
 // src/tweaks/definitions/kill_non_critical_services.rs
 
+use std::{
+    sync::{mpsc, Arc},
+    thread,
+    time::Duration,
+};
+
 use anyhow::Error;
 use tracing::{error, info};
 use widestring::U16CString;
@@ -7,8 +13,9 @@ use windows::{
     core::PCWSTR,
     Win32::System::Services::{
         CloseServiceHandle, ControlService, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx,
-        SC_MANAGER_ALL_ACCESS, SC_STATUS_PROCESS_INFO, SERVICE_CONTROL_STOP, SERVICE_QUERY_STATUS,
-        SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP, SERVICE_STOPPED,
+        SC_HANDLE, SC_MANAGER_ALL_ACCESS, SC_STATUS_PROCESS_INFO, SERVICE_CONTROL_STOP,
+        SERVICE_QUERY_STATUS, SERVICE_STATUS, SERVICE_STATUS_PROCESS, SERVICE_STOP,
+        SERVICE_STOPPED,
     },
 };
 
@@ -123,8 +130,156 @@ const SERVICES_TO_KILL: &[&str; 106] = &[
     "Wcmsvc",             // Windows Connection Manager
 ];
 
+// Define a shared handle wrapper
+#[derive(Debug, Clone)]
+struct SharedHandle(SC_HANDLE);
+
+// Implement Send and Sync for SharedHandle
+unsafe impl Send for SharedHandle {}
+unsafe impl Sync for SharedHandle {}
+
+// Implement Drop to ensure the handle is closed when the last SharedHandle is dropped
+impl Drop for SharedHandle {
+    fn drop(&mut self) {
+        unsafe {
+            if let Err(e) = CloseServiceHandle(self.0) {
+                error!("Failed to close service handle: {:?}", e);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SendSCHandle(Arc<SharedHandle>);
+
+// Implement Send and Sync for SendSCHandle
+unsafe impl Send for SendSCHandle {}
+unsafe impl Sync for SendSCHandle {}
+
 pub struct KillNonCriticalServicesTweak {
     pub id: TweakId,
+}
+
+impl KillNonCriticalServicesTweak {
+    /// Helper function to execute a closure with a timeout.
+    fn execute_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, &'static str>
+    where
+        F: FnOnce() -> Result<T, &'static str> + Send + 'static,
+        T: Send + 'static,
+    {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = f();
+            let _ = sender.send(result);
+        });
+        match receiver.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(_) => Err("Operation timed out"),
+        }
+    }
+
+    /// Attempts to open the Service Control Manager with a timeout.
+    fn open_scm_handle() -> Result<SendSCHandle, &'static str> {
+        KillNonCriticalServicesTweak::execute_with_timeout(
+            || {
+                unsafe {
+                    let handle = OpenSCManagerW(
+                        None,                  // Local machine
+                        None,                  // ServicesActive database
+                        SC_MANAGER_ALL_ACCESS, // Full access to the service control manager
+                    )
+                    .map_err(|_| "Failed to open Service Control Manager")?;
+
+                    if handle.is_invalid() {
+                        return Err("Failed to open Service Control Manager");
+                    }
+
+                    Ok(SendSCHandle(Arc::new(SharedHandle(handle))))
+                }
+            },
+            Duration::from_secs(1),
+        )
+    }
+
+    /// Attempts to open a specific service with a timeout.
+    fn open_service_handle(
+        scm_handle: SendSCHandle,
+        service_name: &str,
+    ) -> Result<SendSCHandle, &'static str> {
+        let service_name_w = U16CString::from_str(service_name)
+            .map_err(|_| "Failed to convert service name to wide string")?;
+        KillNonCriticalServicesTweak::execute_with_timeout(
+            move || {
+                unsafe {
+                    let sc_handle = scm_handle.0.clone(); // Clone the Arc
+                    let handle = OpenServiceW(
+                        sc_handle.0,
+                        PCWSTR(service_name_w.as_ptr()),
+                        SERVICE_STOP | SERVICE_QUERY_STATUS,
+                    )
+                    .map_err(|_| "Failed to open service handle")?;
+
+                    if handle.is_invalid() {
+                        return Err("Failed to open service handle");
+                    }
+
+                    Ok(SendSCHandle(Arc::new(SharedHandle(handle))))
+                }
+            },
+            Duration::from_secs(1),
+        )
+    }
+
+    /// Attempts to query the status of a service with a timeout.
+    fn query_service_status(
+        service_handle: SendSCHandle,
+    ) -> Result<SERVICE_STATUS_PROCESS, &'static str> {
+        KillNonCriticalServicesTweak::execute_with_timeout(
+            move || {
+                unsafe {
+                    let sc_handle = service_handle.0.clone();
+                    let mut buffer = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+                    let mut bytes_needed = 0;
+
+                    let result = QueryServiceStatusEx(
+                        sc_handle.0,
+                        SC_STATUS_PROCESS_INFO,
+                        Some(&mut buffer),
+                        &mut bytes_needed,
+                    );
+
+                    if result.is_err() {
+                        return Err("Failed to query service status");
+                    }
+
+                    // Safely interpret the buffer as SERVICE_STATUS_PROCESS
+                    let status =
+                        std::ptr::read_unaligned(buffer.as_ptr() as *const SERVICE_STATUS_PROCESS);
+
+                    Ok(status)
+                }
+            },
+            Duration::from_secs(1),
+        )
+    }
+
+    /// Attempts to stop a service with a timeout.
+    fn stop_service(service_handle: SendSCHandle) -> Result<(), &'static str> {
+        KillNonCriticalServicesTweak::execute_with_timeout(
+            move || unsafe {
+                let sc_handle = service_handle.0.clone();
+                let mut svc_status: SERVICE_STATUS = std::mem::zeroed();
+                let result = ControlService(sc_handle.0, SERVICE_CONTROL_STOP, &mut svc_status);
+
+                if result.is_err() {
+                    return Err("Failed to stop service");
+                }
+
+                Ok(())
+            },
+            Duration::from_secs(1),
+        )
+    }
 }
 
 impl TweakMethod for KillNonCriticalServicesTweak {
@@ -135,124 +290,101 @@ impl TweakMethod for KillNonCriticalServicesTweak {
 
     fn apply(&self) -> Result<(), Error> {
         info!("{:?} -> Killing non-critical services.", self.id);
-        let mut unkilled_services: Vec<String> = vec![];
+        let mut failed_services: Vec<String> = vec![];
 
-        // Open a handle to the Service Control Manager
-        unsafe {
-            let scm_handle = OpenSCManagerW(
-                None,                  // Local machine
-                None,                  // ServicesActive database
-                SC_MANAGER_ALL_ACCESS, // Full access to the service control manager
-            )
-            .map_err(|_| Error::msg("Failed to open Service Control Manager"))?;
-
-            if scm_handle.is_invalid() {
-                return Err(Error::msg("Failed to open Service Control Manager"));
+        // Attempt to open the Service Control Manager with a timeout
+        let scm_handle = match KillNonCriticalServicesTweak::open_scm_handle() {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to open Service Control Manager: {}", e);
+                // If SCM handle can't be opened, all services are considered failed
+                failed_services.extend(SERVICES_TO_KILL.iter().map(|&s| s.to_string()));
+                // Early return since we can't proceed without SCM
+                return Err(Error::msg(format!(
+                    "Failed to open Service Control Manager: {}",
+                    e
+                )));
             }
+        };
 
-            // Try stopping services up to 10 times
-            for i in 0..10 {
-                tracing::info!("Attempting to stop services - Attempt: {}", i + 1);
+        // Try stopping services up to 5 times
+        for attempt in 1..=5 {
+            tracing::info!("Attempting to stop services - Attempt: {}", attempt);
+            let mut current_failed_services = vec![];
 
-                let mut failed_services = vec![];
-
-                for service_name in SERVICES_TO_KILL {
-                    // Convert the service name to a wide string format required by Windows API
-                    let service_name_w = U16CString::from_str(service_name)
-                        .map_err(|_| Error::msg("Failed to convert service name to wide string"))?;
-
-                    // Open the service with permissions to stop and query status
-                    let service_handle = match OpenServiceW(
-                        scm_handle,
-                        PCWSTR(service_name_w.as_ptr()),
-                        SERVICE_STOP | SERVICE_QUERY_STATUS,
-                    ) {
-                        Ok(handle) => handle,
-                        Err(_) => {
-                            error!("Failed to open service: {}", service_name);
-                            continue;
-                        }
-                    };
-
-                    if service_handle.is_invalid() {
-                        error!("Failed to open service: {}", service_name);
+            for &service_name in SERVICES_TO_KILL.iter() {
+                // Open the service with a timeout
+                let service_handle = match KillNonCriticalServicesTweak::open_service_handle(
+                    scm_handle.clone(),
+                    service_name,
+                ) {
+                    Ok(handle) => handle,
+                    Err(e) => {
+                        error!(
+                            "Attempt {}: Failed to open service '{}': {}",
+                            attempt, service_name, e
+                        );
                         continue;
                     }
+                };
 
-                    // Create a buffer for SERVICE_STATUS_PROCESS to hold the status information
-                    let mut buffer = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
-                    let mut bytes_needed = 0;
-
-                    // Query the current status of the service
-                    let result = QueryServiceStatusEx(
-                        service_handle,
-                        SC_STATUS_PROCESS_INFO,
-                        Some(&mut buffer),
-                        &mut bytes_needed,
-                    );
-
-                    if result.is_err() {
-                        error!("Failed to query service status: {}", service_name);
-                        if let Err(e) = CloseServiceHandle(service_handle) {
-                            error!("Failed to close service handle: {}", e);
-                        }
+                // Query the service status with a timeout
+                let status = match KillNonCriticalServicesTweak::query_service_status(
+                    service_handle.clone(),
+                ) {
+                    Ok(status) => status,
+                    Err(e) => {
+                        error!(
+                            "Attempt {}: Failed to query status for service '{}': {}",
+                            attempt, service_name, e
+                        );
                         continue;
                     }
+                };
 
-                    // Interpret the buffer as SERVICE_STATUS_PROCESS structure
-                    let status =
-                        std::ptr::read_unaligned(buffer.as_ptr() as *const SERVICE_STATUS_PROCESS);
-
-                    if status.dwCurrentState == SERVICE_STOPPED {
-                        // If the service is already stopped, log and move on
-                        info!("Service already stopped: {}", service_name);
-                        if let Err(e) = CloseServiceHandle(service_handle) {
-                            error!("Failed to close service handle: {}", e);
-                        }
-                        continue;
-                    }
-
-                    // Send the stop control to the service
-                    let mut svc_status: SERVICE_STATUS = std::mem::zeroed();
-                    let result =
-                        ControlService(service_handle, SERVICE_CONTROL_STOP, &mut svc_status);
-
-                    if result.is_err() {
-                        error!("Failed to stop service: {}", service_name);
-                        failed_services.push(service_name);
-                    } else {
-                        info!("Service stopped: {}", service_name);
-                    }
-
-                    // Close the handle to the service
-                    if let Err(e) = CloseServiceHandle(service_handle) {
-                        error!("Failed to close service handle: {}", e);
-                    }
+                if status.dwCurrentState == SERVICE_STOPPED {
+                    // Service is already stopped
+                    info!("Service '{}' is already stopped.", service_name);
+                    continue;
                 }
 
-                // If all services were stopped successfully, break out of the loop
-                if failed_services.is_empty() {
-                    break;
+                // Attempt to stop the service with a timeout
+                match KillNonCriticalServicesTweak::stop_service(service_handle.clone()) {
+                    Ok(_) => {
+                        info!("Service '{}' stopped successfully.", service_name);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Attempt {}: Failed to stop service '{}': {}",
+                            attempt, service_name, e
+                        );
+                        current_failed_services.push(service_name.to_string());
+                    }
                 }
-
-                if i == 2 {
-                    unkilled_services = failed_services.iter().map(|&s| s.to_string()).collect();
-                }
-
-                std::thread::sleep(std::time::Duration::from_secs_f32(0.1));
             }
 
-            // Close the handle to the Service Control Manager
-            if let Err(e) = CloseServiceHandle(scm_handle) {
-                error!("Failed to close Service Control Manager handle: {}", e);
+            // If no failures in this attempt, break early
+            if current_failed_services.is_empty() {
+                info!("All services stopped successfully.");
+                break;
             }
+
+            // Update the list of failed services
+            failed_services = current_failed_services;
+
+            // Optionally, you can add a short delay before the next attempt
+            thread::sleep(Duration::from_millis(1000));
         }
 
-        if !unkilled_services.is_empty() {
+        if !failed_services.is_empty() {
             error!(
                 "{:?} -> Failed to stop the following non-critical services: {:?}",
-                self.id, unkilled_services
+                self.id, failed_services
             );
+            return Err(Error::msg(format!(
+                "Failed to stop services: {:?}",
+                failed_services
+            )));
         }
 
         Ok(())
