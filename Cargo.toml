@@ -16,17 +16,10 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Graphics",
+    "Win32_Graphics_Gdi",
 ] }
 anyhow = "1.0.89"
-winapi = { version = "0.3.9", features = [
-    "securitybaseapi",
-    "processthreadsapi",
-    "winnt",
-    "powersetting",
-    "winbase",
-    "winuser",
-    "wingdi",
-] }
 tracing = "0.1.40"
 eframe = "0.28.1"
 egui = "0.28.1"

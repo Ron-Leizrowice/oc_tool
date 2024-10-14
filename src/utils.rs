@@ -3,14 +3,10 @@
 use std::process::Command;
 
 use anyhow::{anyhow, Result as AnyResult};
-use winapi::{
-    shared::ntdef::HANDLE,
-    um::{
-        handleapi::CloseHandle,
-        processthreadsapi::{GetCurrentProcess, OpenProcessToken},
-        securitybaseapi::GetTokenInformation,
-        winnt::{TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
-    },
+use windows::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
 /// Checks if the current process is running with elevated (administrator) privileges.
@@ -20,8 +16,8 @@ use winapi::{
 /// - `true` if the process is elevated.
 /// - `false` otherwise.
 pub fn is_elevated() -> bool {
-    let mut handle: HANDLE = std::ptr::null_mut();
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } != 0 {
+    let mut handle: HANDLE = HANDLE::default();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle).is_ok() } {
         let mut elevation: TOKEN_ELEVATION = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of::<TOKEN_ELEVATION>();
         let mut ret_size = size;
@@ -29,21 +25,22 @@ pub fn is_elevated() -> bool {
             GetTokenInformation(
                 handle,
                 TokenElevation,
-                &mut elevation as *mut _ as *mut _,
+                Some(&mut elevation as *mut _ as *mut _),
                 size as u32,
                 &mut ret_size as *mut _ as *mut _,
-            ) != 0
+            )
+            .is_ok()
         } {
             // Close the handle before returning
-            if !handle.is_null() {
-                unsafe { CloseHandle(handle) };
+            if handle != HANDLE(std::ptr::null_mut()) && unsafe { CloseHandle(handle).is_err() } {
+                return false;
             }
             return elevation.TokenIsElevated != 0;
         }
     }
     // Close the handle if it was opened
-    if !handle.is_null() {
-        unsafe { CloseHandle(handle) };
+    if handle != HANDLE(std::ptr::null_mut()) && unsafe { CloseHandle(handle).is_err() } {
+        return false;
     }
     false
 }

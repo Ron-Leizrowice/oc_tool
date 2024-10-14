@@ -1,17 +1,13 @@
-// src/tweaks/definitions/low_res_mode.rs
-
-use std::{fs::File, io::Write, mem::zeroed, ptr::null_mut};
+use std::{fs::File, io::Write, mem::zeroed};
 
 use anyhow::anyhow;
 use tracing::info;
-use winapi::{
-    shared::minwindef::DWORD,
-    um::{
-        wingdi::{DEVMODEW, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH},
-        winuser::{
-            ChangeDisplaySettingsW, EnumDisplaySettingsW, CDS_UPDATEREGISTRY,
-            DISP_CHANGE_SUCCESSFUL, ENUM_CURRENT_SETTINGS,
-        },
+use windows::{
+    core::PCWSTR,
+    Win32::Graphics::Gdi::{
+        ChangeDisplaySettingsW, EnumDisplaySettingsW, CDS_UPDATEREGISTRY, DEVMODEW, DISP_CHANGE,
+        DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
+        ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE,
     },
 };
 
@@ -30,11 +26,17 @@ fn get_display_settings() -> Vec<DisplaySettingsType> {
     let mut dev_mode: DEVMODEW = unsafe { zeroed() };
     dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
 
-    let mut mode_num: DWORD = 0;
+    let mut mode_num = 0;
 
     loop {
-        let result = unsafe { EnumDisplaySettingsW(null_mut(), mode_num, &mut dev_mode) };
-        if result == 0 {
+        let result = unsafe {
+            EnumDisplaySettingsW(
+                PCWSTR::null(),
+                ENUM_DISPLAY_SETTINGS_MODE(mode_num),
+                &mut dev_mode,
+            )
+        };
+        if !result.as_bool() {
             break;
         }
 
@@ -52,15 +54,15 @@ fn get_display_settings() -> Vec<DisplaySettingsType> {
 
 /// Applies the specified display settings using ChangeDisplaySettingsW.
 /// Returns the DISP_CHANGE result code.
-fn set_display_settings(new_settings: DisplaySettingsType) -> i32 {
+fn set_display_settings(new_settings: DisplaySettingsType) -> DISP_CHANGE {
     let mut dev_mode: DEVMODEW = unsafe { zeroed() };
     dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
-    dev_mode.dmPelsWidth = new_settings.width as DWORD;
-    dev_mode.dmPelsHeight = new_settings.height as DWORD;
-    dev_mode.dmDisplayFrequency = new_settings.refresh_rate as DWORD;
+    dev_mode.dmPelsWidth = new_settings.width as u32;
+    dev_mode.dmPelsHeight = new_settings.height as u32;
+    dev_mode.dmDisplayFrequency = new_settings.refresh_rate as u32;
     dev_mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
 
-    unsafe { ChangeDisplaySettingsW(&mut dev_mode, CDS_UPDATEREGISTRY) }
+    unsafe { ChangeDisplaySettingsW(Some(&dev_mode), CDS_UPDATEREGISTRY) }
 }
 
 /// Retrieves the current display settings using EnumDisplaySettingsW with ENUM_CURRENT_SETTINGS.
@@ -68,8 +70,9 @@ fn get_current_display_settings() -> Result<DisplaySettingsType, anyhow::Error> 
     let mut dev_mode: DEVMODEW = unsafe { zeroed() };
     dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
 
-    let result = unsafe { EnumDisplaySettingsW(null_mut(), ENUM_CURRENT_SETTINGS, &mut dev_mode) };
-    if result == 0 {
+    let result =
+        unsafe { EnumDisplaySettingsW(PCWSTR::null(), ENUM_CURRENT_SETTINGS, &mut dev_mode) };
+    if !result.as_bool() {
         return Err(anyhow!("Failed to retrieve current display settings."));
     }
 
@@ -138,10 +141,10 @@ impl TweakMethod for LowResMode {
         let result = set_display_settings(self.target_state.clone());
         match result {
             DISP_CHANGE_SUCCESSFUL => Ok(()),
-            code => Err(anyhow!(
-                "{:?} -> Failed to apply display settings. Error code: {}",
+            _ => Err(anyhow!(
+                "{:?} -> Failed to apply display settings. Error code: {:?}",
                 self.id,
-                code
+                result
             )),
         }
     }
@@ -150,10 +153,10 @@ impl TweakMethod for LowResMode {
         let result = set_display_settings(self.default.clone());
         match result {
             DISP_CHANGE_SUCCESSFUL => Ok(()),
-            code => Err(anyhow!(
-                "{:?} -> Failed to revert display settings. Error code: {}",
+            _ => Err(anyhow!(
+                "{:?} -> Failed to revert display settings. Error code: {:?}",
                 self.id,
-                code
+                result
             )),
         }
     }
@@ -161,7 +164,7 @@ impl TweakMethod for LowResMode {
 
 #[cfg(test)]
 mod tests {
-    use winapi::um::winuser::DISP_CHANGE_SUCCESSFUL;
+    use windows::Win32::Graphics::Gdi::DISP_CHANGE_SUCCESSFUL;
 
     use super::*;
 
