@@ -18,6 +18,7 @@ use windows::{
 };
 
 use super::{Tweak, TweakCategory, TweakId, TweakMethod};
+use crate::utils::get_current_username;
 
 /// Group Policy related constants.
 pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
@@ -88,7 +89,7 @@ impl GroupPolicyTweak {
             let mut domain_name_size = 0u32;
             let mut sid_name_use = SID_NAME_USE(0);
 
-            let user_name = whoami::username();
+            let user_name = get_current_username();
             let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
 
             // First call to LookupAccountNameW to get buffer sizes
@@ -254,7 +255,7 @@ impl GroupPolicyTweak {
             let mut domain_name_size = 0u32;
             let mut sid_name_use = SID_NAME_USE(0);
 
-            let user_name = whoami::username();
+            let user_name = get_current_username();
             let user_name_wide: Vec<u16> = user_name.encode_utf16().chain(Some(0)).collect();
 
             // First call to LookupAccountNameW to get buffer sizes

@@ -3,10 +3,16 @@
 use std::process::Command;
 
 use anyhow::{anyhow, Result as AnyResult};
-use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE},
-    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
+use windows::{
+    core::PWSTR as CorePWSTR,
+    Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+        System::{
+            Threading::{GetCurrentProcess, OpenProcessToken},
+            WindowsProgramming::GetUserNameW,
+        },
+    },
 };
 
 /// Checks if the current process is running with elevated (administrator) privileges.
@@ -72,6 +78,20 @@ pub fn reboot_into_bios() -> AnyResult<()> {
         .status()
         .map(|_| ())
         .map_err(|e| anyhow!("Failed to execute shutdown into BIOS command: {}", e))
+}
+
+/// Retrieves the current username using the Windows API.
+pub fn get_current_username() -> String {
+    let mut buffer = [0u16; 256]; // Create a buffer for the username
+    let mut size = buffer.len() as u32;
+
+    let result = unsafe { GetUserNameW(CorePWSTR::from_raw(buffer.as_mut_ptr()), &mut size) };
+
+    if result.is_ok() {
+        String::from_utf16_lossy(&buffer[..size as usize - 1])
+    } else {
+        panic!("Failed to get current username")
+    }
 }
 
 #[cfg(test)]
