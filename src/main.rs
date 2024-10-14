@@ -11,7 +11,6 @@ use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
-use tinyfiledialogs::YesNo;
 use tracing::Level;
 use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
@@ -338,33 +337,22 @@ impl MyApp {
                     .font(FontId::proportional(14.0)),
                 );
 
-                // If there are pending reboots, show a reboot button
-                if pending_reboot_count > 0 {
-                    ui.separator(); // Vertical separator
-                    if ui
-                        .add(Button::new("Restart Windows").min_size(BUTTON_DIMENSIONS))
-                        .clicked()
-                    {
-                        // Show confirmation dialog
-                        if tinyfiledialogs::message_box_yes_no(
-                            "Confirm Reboot",
-                            "Are you sure you want to reboot the system now?",
-                            tinyfiledialogs::MessageBoxIcon::Question,
-                            YesNo::Yes,
-                        ) == YesNo::Yes
-                        {
-                            // Trigger system reboot and handle any errors
-                            if let Err(e) = reboot_system() {
-                                tracing::error!("Failed to initiate reboot: {:?}", e);
-                                tinyfiledialogs::message_box_ok(
-                                    "Overclocking Assistant",
-                                    &format!("Failed to reboot the system: {:?}", e),
-                                    tinyfiledialogs::MessageBoxIcon::Error,
-                                );
-                            }
-                        }
+                ui.separator(); // Vertical separator
+                if ui
+                    .add(Button::new("Restart Windows").min_size(BUTTON_DIMENSIONS))
+                    .clicked()
+                {
+                    // Trigger system reboot and handle any errors
+                    if let Err(e) = reboot_system() {
+                        tracing::error!("Failed to initiate reboot: {:?}", e);
+                        tinyfiledialogs::message_box_ok(
+                            "Overclocking Assistant",
+                            &format!("Failed to reboot the system: {:?}", e),
+                            tinyfiledialogs::MessageBoxIcon::Error,
+                        );
                     }
                 }
+
                 // Right-aligned status bar items
                 ui.separator(); // Vertical separator
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -60,7 +60,6 @@ fn set_display_settings(new_settings: DisplaySettingsType) -> i32 {
     dev_mode.dmDisplayFrequency = new_settings.refresh_rate as DWORD;
     dev_mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
 
-    
     unsafe { ChangeDisplaySettingsW(&mut dev_mode, CDS_UPDATEREGISTRY) }
 }
 
@@ -82,7 +81,7 @@ fn get_current_display_settings() -> Result<DisplaySettingsType, anyhow::Error> 
 }
 
 pub struct LowResMode {
-    id: TweakId,
+    pub id: TweakId,
     pub default: DisplaySettingsType,
     pub target_state: DisplaySettingsType,
 }

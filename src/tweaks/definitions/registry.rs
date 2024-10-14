@@ -22,7 +22,7 @@ pub fn enable_large_system_cache() -> Tweak {
                 },
             ],
         },
-        true,
+        true, // requires reboot
     )
 }
 
@@ -46,7 +46,7 @@ pub fn system_responsiveness() -> Tweak {
                 },
             ],
         },
-        false,
+        false, // does not require reboot
     )
 }
 
@@ -64,7 +64,7 @@ pub fn disable_hw_acceleration() -> Tweak {
                 default_value: Some(RegistryKeyValue::Dword(0)),
             }],
         },
-        false,
+        true, // requires reboot
     )
 }
 
@@ -86,7 +86,7 @@ pub fn win32_priority_separation() -> Tweak {
                 default_value: Some(RegistryKeyValue::Dword(2)),
             }],
         },
-        false,
+        false, // does not require reboot
     )
 }
 
@@ -106,7 +106,7 @@ pub fn disable_core_parking() -> Tweak {
                 },
             ],
         },
-        false,
+        true, // requires reboot
     )
 }
 
@@ -126,7 +126,7 @@ pub fn disable_low_disk_space_checks() -> Tweak {
                 },
             ],
         },
-        false,
+        true, // requires reboot
     )
 }
 
@@ -145,7 +145,7 @@ pub fn disable_ntfs_tunnelling() -> Tweak {
                 default_value: None,
             }],
         },
-        false,
+        false, // requires reboot
     )
 }
 
@@ -191,7 +191,7 @@ pub fn disable_windows_error_reporting() -> Tweak {
 
 pub fn dont_verify_random_drivers() -> Tweak {
     Tweak::registry_tweak(
-        "Don't Verify Random Drivers".to_string(),
+        "Disable Random Driver Verification".to_string(),
         "Disables random driver verification to improve system performance.".to_string(),
         TweakCategory::System,
         RegistryTweak {
@@ -211,7 +211,7 @@ pub fn dont_verify_random_drivers() -> Tweak {
 pub fn disable_driver_paging() -> Tweak {
     Tweak::registry_tweak(
         "Disable Driver Paging".to_string(),
-        "Prevents drivers from being paged into virtual memory by setting the `DisablePagingExecutive` registry value to `1`. This can enhance system performance by keeping critical drivers in physical memory but may increase memory usage.".to_string(),
+        " Paging executive is used to load system files such as kernel and hardware drivers to the page file when needed. Disable will force run into not virtual memory".to_string(),
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::DisableDriverPaging,
@@ -230,9 +230,9 @@ pub fn disable_driver_paging() -> Tweak {
 
 pub fn disable_prefetcher() -> Tweak {
     Tweak::registry_tweak(
-        "Disable Prefetcher".to_string(),
-        "Disables the Prefetcher service to improve system performance.".to_string(),
-        TweakCategory::Memory,
+        "Disable Prefetcher Service".to_string(),
+        "Disables the Prefetcher service by setting the `EnablePrefetcher` registry value to `0`. This may reduce system boot time and improve performance, especially on systems with SSDs.".to_string(),
+        TweakCategory::Services,
         RegistryTweak {
             id: TweakId::DisablePrefetcher,
             modifications: vec![
@@ -381,7 +381,7 @@ pub fn disable_windows_maintenance() -> Tweak {
                 },
             ],
         },
-        false,
+        false, // requires reboot
     )
 }
 
@@ -442,20 +442,19 @@ Disables speculative execution mitigations by setting the `FeatureSettingsOverri
 pub fn high_performance_visual_settings() -> Tweak {
     Tweak::registry_tweak(
         "High Performance Visual Settings".to_string(),
-"
+        "
 This tweak adjusts Windows visual settings to prioritize performance over appearance:
 
 1. Sets the overall Visual Effects setting to 'Adjust for best performance'
-2. Disables transparency effects in the taskbar, Start menu, and Action Center
-3. Disables animations when minimizing and maximizing windows
-4. Turns off animated controls and elements inside windows
-5. Disables Aero Peek (the feature that shows desktop previews when hovering over the Show Desktop button)
-6. Turns off live thumbnails for taskbar previews
-7. Disables smooth scrolling of list views
-8. Turns off fading effects for menus and tooltips
-9. Disables font smoothing (ClearType)
-10. Turns off the shadow effect under mouse pointer
-11. Disables the shadow effect for window borders
+2. Disables animations when minimizing and maximizing windows
+3. Turns off animated controls and elements inside windows
+4. Disables Aero Peek (the feature that shows desktop previews when hovering over the Show Desktop button)
+5. Turns off live thumbnails for taskbar previews
+6. Disables smooth scrolling of list views
+7. Turns off fading effects for menus and tooltips
+8. Disables font smoothing (ClearType)
+9. Turns off the shadow effect under mouse pointer
+10. Disables the shadow effect for window borders
 ".trim().to_string(),
         TweakCategory::Graphics,
         RegistryTweak {
@@ -468,70 +467,63 @@ This tweak adjusts Windows visual settings to prioritize performance over appear
                     target_value: RegistryKeyValue::Dword(2),
                     default_value: Some(RegistryKeyValue::Dword(0)), // Default VisualFXSetting
                 },
-                // 2. Disable transparency effects
-                RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".to_string(),
-                    key: "EnableTransparency".to_string(),
-                    target_value: RegistryKeyValue::Dword(0),
-                    default_value: Some(RegistryKeyValue::Dword(1)),
-                },
-                // 3. Disable animations when minimizing/maximizing windows
+                // 2. Disable animations when minimizing/maximizing windows
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics".to_string(),
                     key: "MinAnimate".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
-                // 4. Turn off animated controls and elements inside windows
+                // 3. Turn off animated controls and elements inside windows
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
                     key: "UserPreferencesMask".to_string(),
                     target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
                     default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
                 },
-                // 5. Disable Aero Peek
+                // 4. Disable Aero Peek
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM".to_string(),
                     key: "EnableAeroPeek".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
-                // 6. Turn off live thumbnails for taskbar previews
+                // 5. Turn off live thumbnails for taskbar previews
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".to_string(),
                     key: "ExtendedUIHoverTime".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(400)), // Default hover time
                 },
-                // 7. Disable smooth scrolling of list views
+                // 6. Disable smooth scrolling of list views
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
                     key: "SmoothScroll".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
-                // 8. Turn off fading effects for menus and tooltips
+                // 7. Turn off fading effects for menus and tooltips
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
                     key: "UserPreferencesMask".to_string(),
                     target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
                     default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
                 },
-                // 9. Disable font smoothing (ClearType)
+                // 8. Disable font smoothing (ClearType)
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
                     key: "FontSmoothing".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(2)),
                 },
-                // 10. Turn off the shadow effect under mouse pointer
+                // 9. Turn off the shadow effect under mouse pointer
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Control Panel\\Cursors".to_string(),
                     key: "CursorShadow".to_string(),
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
-                // 11. Disable the shadow effect for window borders
+                // 10. Disable the shadow effect for window borders
                 RegistryModification {
                     path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize".to_string(),
                     key: "EnableTransparentGlass".to_string(),
@@ -638,7 +630,7 @@ pub fn enhanced_kernel_performance() -> Tweak {
                 },
             ],
         },
-        false,
+        false, // does not require reboot
     )
 }
 
@@ -658,6 +650,95 @@ pub fn split_large_caches() -> Tweak {
                 },
             ],
         },
-        false,
+        true, // requires reboot
+    )
+}
+
+pub fn disable_protected_services() -> Tweak {
+    Tweak::registry_tweak(
+        "Disable Protected Services".to_string(),
+        "Disables multiple services which can only be stopped by modifying the registry. These will not break your system, but will stop networking functionality.".to_string(),
+        TweakCategory::Services,
+        RegistryTweak {
+            id: TweakId::DisableProtectedServices,
+            modifications: vec![
+                RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\DoSvc".to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(3)),
+            },
+            RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Dhcp".to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            },
+            RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\NcbService"
+                    .to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            },
+            RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\netprofm"
+                    .to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            },
+            RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\nsi".to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            },
+            RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\RmSvc".to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            }
+            ],
+        },
+        true, // requires reboot
+    )
+}
+
+pub fn disable_security_accounts_manager() -> Tweak {
+    Tweak::registry_tweak(
+        "Disable Security Accounts Manager".to_string(),
+        "Disables the Security Accounts Manager service by setting the Start registry DWORD to 4."
+            .to_string(),
+        TweakCategory::Services,
+        RegistryTweak {
+            id: TweakId::DisableSecurityAccountsManager,
+            modifications: vec![RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\SamSs".to_string(),
+                key: "Start".to_string(),
+                target_value: RegistryKeyValue::Dword(4),
+                default_value: Some(RegistryKeyValue::Dword(2)),
+            }],
+        },
+        true, // requires reboot
+    )
+}
+
+pub fn disable_paging_combining() -> Tweak {
+    Tweak::registry_tweak(
+        "Disable Paging Combining".to_string(),
+        "Disables Windows attempt to save as much RAM as possible, such as sharing pages for images, copy-on-write for data pages, and compression.".to_string(),
+        TweakCategory::Memory,
+        RegistryTweak {
+            id: TweakId::DisablePagingCombining,
+            modifications: vec![RegistryModification {
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
+                key: "DisablePagingCombining".to_string(),
+                target_value: RegistryKeyValue::Dword(1),
+                default_value: None,
+            }],
+        },
+        true, // requires reboot
     )
 }

@@ -68,6 +68,7 @@ pub enum TweakCategory {
     Graphics,
     Telemetry,
     Storage,
+    Services,
 }
 
 impl TweakCategory {
@@ -82,6 +83,7 @@ impl TweakCategory {
             Self::Security,
             Self::Telemetry,
             Self::Action,
+            Self::Services,
         ]
     }
 }
@@ -250,6 +252,10 @@ pub enum TweakId {
     HighPerformanceVisualSettings,
     LowResMode,
     SplitLargeCaches,
+    DisableProtectedServices,
+    DisableSecurityAccountsManager,
+    DisablePagingCombining,
+    DisableSuperfetch,
 }
 
 /// Initializes all tweaks with their respective configurations.
@@ -392,5 +398,18 @@ pub fn all() -> BTreeMap<TweakId, Tweak> {
             TweakId::SplitLargeCaches,
             definitions::registry::split_large_caches(),
         ),
+        (
+            TweakId::DisableProtectedServices,
+            definitions::registry::disable_protected_services(),
+        ),
+        (
+            TweakId::DisableSecurityAccountsManager,
+            definitions::registry::disable_security_accounts_manager(),
+        ),
+        (
+            TweakId::DisablePagingCombining,
+            definitions::registry::disable_paging_combining(),
+        ),
+        (TweakId::DisableSuperfetch, powershell::disable_superfetch()),
     ])
 }

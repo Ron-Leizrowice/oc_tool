@@ -572,9 +572,9 @@ pub fn disable_data_execution_prevention() -> Tweak {
                 .trim()
                 .to_string(),
             ),
-            apply_script: "bcdedit /set {current} nx AlwaysOff".to_string(),
+            apply_script: "bcdedit.exe /set nx AlwaysOff".to_string(),
             undo_script: Some(
-                "bcdedit /set {current} nx OptIn".to_string(),
+                "bcdedit.exe /set nx OptIn".to_string(),
             ),
             target_state: Some("Enabled".to_string()),
         },
@@ -628,5 +628,35 @@ pub fn disable_process_idle_states() -> Tweak {
             target_state: Some("0x00000001".to_string()),
         },
         false,
+    )
+}
+
+pub fn disable_superfetch() -> Tweak {
+    Tweak::powershell_tweak(
+        "Disable Superfetch".to_string(),
+        "Disables the Superfetch service, which preloads frequently used applications into memory to improve performance. This tweak can reduce disk I/O and memory usage but may impact performance in some scenarios.".to_string(),
+        TweakCategory::Memory,
+        PowershellTweak {
+            id: TweakId::DisableSuperfetch,
+            read_script: Some(
+                r#"
+                $superfetchStatus = Get-Service -Name SysMain | Select-Object -ExpandProperty Status
+
+                if ($superfetchStatus -eq "Running") {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#
+                .trim()
+                .to_string(),
+            ),
+            apply_script: "sc stop “SysMain” & sc config “SysMain” start=disabled".to_string(),
+            undo_script: Some(
+                "sc config “SysMain” start=auto & sc start “SysMain”".to_string(),
+            ),
+            target_state: Some("Enabled".to_string()),
+        },
+        true, // requires reboot
     )
 }

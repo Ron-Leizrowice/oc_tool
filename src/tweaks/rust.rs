@@ -43,7 +43,7 @@ pub fn kill_all_non_critical_services() -> Tweak {
     Tweak::rust_tweak(
         "Kill All Non-Critical Services".to_string(),
         "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.".to_string(),
-        TweakCategory::Action,
+        TweakCategory::Services,
         KillNonCriticalServicesTweak {
             id: TweakId::KillAllNonCriticalServices,
         },
