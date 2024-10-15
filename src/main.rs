@@ -13,7 +13,7 @@ use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
 use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tracing::Level;
-use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
+use tweaks::{definitions::TweakId, Tweak, TweakCategory, TweakStatus};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
     button::{action_button, ButtonState},
@@ -61,7 +61,7 @@ impl MyApp {
         let app_span = tracing::span!(Level::INFO, "App Initialization");
         let _app_guard = app_span.enter();
 
-        let mut tweaks = tweaks::all();
+        let mut tweaks = tweaks::definitions::all();
         let orchestrator = TaskOrchestrator::new();
 
         for (id, tweak) in tweaks.iter_mut() {

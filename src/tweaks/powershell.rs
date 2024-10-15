@@ -4,7 +4,7 @@ use std::process::Command;
 
 use tracing::{debug, error, info, warn};
 
-use super::{TweakId, TweakMethod};
+use super::{definitions::TweakId, TweakMethod};
 
 /// Represents a PowerShell-based tweak, including scripts to read, apply, and undo the tweak.
 #[derive(Clone, Debug)]

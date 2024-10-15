@@ -14,7 +14,8 @@ use windows::{
     },
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use super::TweakId;
+use crate::tweaks::TweakMethod;
 
 pub struct DisableProcessIdleStates {
     id: TweakId,

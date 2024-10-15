@@ -17,7 +17,7 @@ use windows::{
     },
 };
 
-use super::{Tweak, TweakCategory, TweakId, TweakMethod};
+use super::{definitions::TweakId, TweakMethod};
 use crate::utils::get_current_username;
 
 /// Group Policy related constants.
@@ -453,18 +453,4 @@ impl Drop for LsaHandleGuard {
             }
         }
     }
-}
-
-pub fn se_lock_memory_privilege() -> Tweak {
-    Tweak::group_policy_tweak(
-        "SeLockMemoryPrivilege".to_string(),
-        "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),
-        TweakCategory::Memory,
-        GroupPolicyTweak {
-            id: TweakId::SeLockMemoryPrivilege,
-            key: "SeLockMemoryPrivilege".to_string(),
-            value: GroupPolicyValue::Enabled,
-        },
-        true,
-    )
 }

@@ -7,7 +7,8 @@ use winreg::{
     RegKey, RegValue,
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use super::definitions::TweakId;
+use crate::tweaks::TweakMethod;
 
 /// Defines a set of modifications to the Windows registry, which in combination
 /// make up a single tweak.

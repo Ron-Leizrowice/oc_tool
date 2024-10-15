@@ -2,7 +2,8 @@ use std::process::Command;
 
 use anyhow::Error;
 
-use crate::tweaks::{TweakId, TweakMethod};
+use super::TweakId;
+use crate::tweaks::TweakMethod;
 
 pub struct ProcessIdleTasksTweak {
     pub id: TweakId,

@@ -20,9 +20,13 @@ use windows::{
         },
     },
 };
-use winreg::{enums::*, RegKey};
+use winreg::{
+    enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
+    RegKey,
+};
 
-use crate::tweaks::{TweakId, TweakMethod};
+use super::TweakId;
+use crate::tweaks::TweakMethod;
 
 /// Struct implementing the TweakMethod trait for killing Explorer.
 pub struct KillExplorerTweak {

@@ -19,7 +19,8 @@ use windows::{
     },
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use super::TweakId;
+use crate::tweaks::TweakMethod;
 
 const SERVICES_TO_KILL: &[&str; 106] = &[
     "AdobeARMservice",            // Adobe Acrobat Update Service
