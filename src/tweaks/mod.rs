@@ -2,6 +2,7 @@
 
 pub mod definitions;
 pub mod group_policy;
+pub mod msr;
 pub mod powershell;
 pub mod registry;
 
@@ -9,6 +10,7 @@ use std::sync::Arc;
 
 use anyhow::Error;
 use group_policy::GroupPolicyTweak;
+use msr::MSRTweak;
 use powershell::PowershellTweak;
 use registry::RegistryTweak;
 
@@ -67,7 +69,6 @@ pub enum TweakCategory {
     Security,
     Graphics,
     Telemetry,
-    Storage,
     Services,
 }
 
@@ -78,7 +79,6 @@ impl TweakCategory {
 
     pub fn right() -> Vec<Self> {
         vec![
-            Self::Storage,
             Self::Power,
             Self::Security,
             Self::Telemetry,
@@ -168,6 +168,26 @@ impl Tweak {
             category,
             method: Arc::new(method),
             widget,
+            requires_reboot,
+            status: TweakStatus::Idle,
+            enabled: false,
+            pending_reboot: false,
+        }
+    }
+
+    pub fn msr_tweak(
+        name: String,
+        description: String,
+        category: TweakCategory,
+        method: MSRTweak,
+        requires_reboot: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            category,
+            method: Arc::new(method),
+            widget: TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,

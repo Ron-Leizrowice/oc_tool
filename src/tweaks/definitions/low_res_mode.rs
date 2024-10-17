@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write, mem::zeroed};
+use std::mem::zeroed;
 
 use anyhow::anyhow;
 use tracing::info;
@@ -93,17 +93,6 @@ pub struct LowResMode {
 impl Default for LowResMode {
     fn default() -> Self {
         let options = get_display_settings();
-
-        // Save all the options to a .tmp file
-        let mut file = File::create("display_settings.tmp").expect("Unable to create temp file");
-        for option in &options {
-            writeln!(
-                file,
-                "{}x{} @{}hz",
-                option.width, option.height, option.refresh_rate
-            )
-            .expect("Unable to write to temp file");
-        }
 
         // Find the lowest refresh rate settings
         let min_refresh_rate = options

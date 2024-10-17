@@ -1,5 +1,5 @@
-#![windows_subsystem = "windows"]
-
+// // src/main.rs
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod orchestrator;
 mod power;
 mod tweaks;
@@ -11,9 +11,13 @@ use std::collections::BTreeMap;
 use eframe::{egui, App, Frame, NativeOptions};
 use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
 use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
-use power::{read_power_state, PowerState, SlowMode, SLOW_MODE_DESCRIPTION};
 use tracing::Level;
-use tweaks::{definitions::TweakId, Tweak, TweakCategory, TweakStatus};
+use tracing_subscriber::{self};
+use tweaks::{
+    definitions::TweakId,
+    msr::{setup_winring0_service, verify_winring0_setup},
+    Tweak, TweakCategory, TweakStatus,
+};
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
     button::{action_button, ButtonState},
@@ -46,10 +50,6 @@ const BUTTON_DIMENSIONS: Vec2 = vec2(40.0, 20.0);
 pub struct MyApp {
     pub tweaks: BTreeMap<TweakId, Tweak>,
     pub orchestrator: TaskOrchestrator,
-
-    // Power management fields
-    pub power_state: PowerState,
-    pub slow_mode: bool,
 
     // State tracking for initial state reads
     pub initial_states_loaded: bool,
@@ -84,8 +84,6 @@ impl MyApp {
         Self {
             tweaks,
             orchestrator,
-            power_state: read_power_state().unwrap(),
-            slow_mode: false,
             initial_states_loaded: false,
             pending_initial_state_reads,
         }
@@ -129,6 +127,25 @@ impl MyApp {
                 }
             }
         }
+
+        // slow_mode and ultimate_performance are mutually exclusive
+        let slow_mode_state = self.tweaks.get(&TweakId::SlowMode).unwrap().enabled;
+        let ultimate_performance_state = self
+            .tweaks
+            .get(&TweakId::UltimatePerformancePlan)
+            .unwrap()
+            .enabled;
+        if slow_mode_state && ultimate_performance_state {
+            // this should never happen
+            panic!("Both Slow Mode and Ultimate Performance are enabled at the same time.");
+        } else if slow_mode_state {
+            self.tweaks
+                .get_mut(&TweakId::UltimatePerformancePlan)
+                .unwrap()
+                .enabled = false;
+        } else if ultimate_performance_state {
+            self.tweaks.get_mut(&TweakId::SlowMode).unwrap().enabled = false;
+        }
     }
 
     fn cleanup(&mut self) {
@@ -144,10 +161,6 @@ impl MyApp {
         };
         if let Err(e) = self.orchestrator.submit_task(task) {
             tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
-        }
-
-        if let Err(e) = self.disable_slow_mode() {
-            tracing::error!("Failed to disable slow mode during exit: {:?}", e);
         }
     }
 
@@ -367,38 +380,6 @@ impl MyApp {
                             );
                         }
                     }
-
-                    let slow_mode_label = match self.slow_mode {
-                        true => "Slow Mode: ON",
-                        false => "Slow Mode: OFF",
-                    };
-
-                    if ui
-                        .add(Button::new(slow_mode_label).min_size(BUTTON_DIMENSIONS))
-                        .on_hover_text(SLOW_MODE_DESCRIPTION)
-                        .clicked()
-                    {
-                        match self.slow_mode {
-                            false => match self.enable_slow_mode() {
-                                Ok(_) => {
-                                    tracing::debug!("Slow mode enabled successfully.");
-                                    self.slow_mode = true;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to enable slow mode: {:?}", e);
-                                }
-                            },
-                            true => match self.disable_slow_mode() {
-                                Ok(_) => {
-                                    tracing::debug!("Slow mode disabled successfully.");
-                                    self.slow_mode = false;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to disable slow mode: {:?}", e);
-                                }
-                            },
-                        }
-                    }
                 });
             });
 
@@ -430,6 +411,9 @@ impl App for MyApp {
 
             self.draw_status_bar(ctx);
         }
+
+        // sleep for a bit to avoid locking the CPU core
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -438,24 +422,51 @@ impl App for MyApp {
 }
 
 fn main() -> eframe::Result<()> {
-    match is_elevated() {
-        true => tracing::debug!("Running with elevated privileges."),
-        false => {
-            tinyfiledialogs::message_box_ok(
-                "OC Tool",
-                "Administrator privileges required",
-                tinyfiledialogs::MessageBoxIcon::Error,
-            );
-            return Ok(());
-        }
+    // Check for elevated privileges
+    if !is_elevated() {
+        tinyfiledialogs::message_box_ok(
+            "OC Tool",
+            "Administrator privileges required",
+            tinyfiledialogs::MessageBoxIcon::Error,
+        );
+        return Ok(());
     }
 
-    tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
-        .with_target(false)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-        .init();
+    if verify_winring0_setup().is_err() {
+        match setup_winring0_service() {
+            Ok(_) => {}
+            Err(e) => {
+                tinyfiledialogs::message_box_ok(
+                    "OC Tool",
+                    &format!("Failed to initialize WinRing0: {:?}", e),
+                    tinyfiledialogs::MessageBoxIcon::Error,
+                );
+                return Ok(());
+            }
+        }
+    }
+    // Initialize logging based on build mode
+    #[cfg(debug_assertions)]
+    {
+        // Initialize tracing to log to terminal (stdout) in debug mode
+        tracing_subscriber::fmt()
+            .with_max_level(Level::DEBUG)
+            .with_target(false)
+            .init();
+        tracing::debug!("Logging initialized to terminal in debug mode.");
+    }
 
+    #[cfg(not(debug_assertions))]
+    {
+        // In release mode, set up a no-op subscriber to disable logging
+        // This prevents any tracing macros from producing output
+        use tracing_subscriber::Registry;
+        let noop_subscriber = Registry::default();
+        tracing::subscriber::set_global_default(noop_subscriber)
+            .expect("Failed to set global subscriber.");
+    }
+
+    // Set up eframe NativeOptions as before
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
@@ -469,7 +480,7 @@ fn main() -> eframe::Result<()> {
         eframe::run_native(
             "OC Tool",
             options,
-            Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
+            Box::new(|cc| Ok(Box::new(MyApp::new(cc)))), // No guard needed
         )
     })
 }

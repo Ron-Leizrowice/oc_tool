@@ -2,10 +2,13 @@
 name = "oc_tool"
 version = "1.0.0"
 edition = "2021"
+build = "src/build.rs"
 
 
 [dependencies]
 windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
     "Win32_Security_Authentication_Identity",
     "Win32_System_Registry",
     "Win32_System_Power",
@@ -13,10 +16,17 @@ windows = { version = "0.58", features = [
     "Win32_System_Services",
     "Win32_System_Threading",
     "Win32_System_Diagnostics",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Graphics",
     "Win32_Graphics_Gdi",
     "Win32_System_WindowsProgramming",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_SystemServices",
+    "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
 ] }
 anyhow = "1.0.89"
@@ -28,6 +38,10 @@ tinyfiledialogs = "3.9.1"
 crossbeam = "0.8.4"
 widestring = "1.1.0"
 winreg = "0.52.0"
+tracing-appender = "0.2.3"
+num_cpus = "1.16.0"
+rand = "0.8.5"
+
 
 [profile.release-lto]
 inherits = "release"
