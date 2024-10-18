@@ -9,7 +9,7 @@ mod widgets;
 use std::collections::BTreeMap;
 
 use eframe::{egui, App, Frame, NativeOptions};
-use egui::{vec2, Button, FontId, RichText, Sense, Vec2};
+use egui::{vec2, Button, FontId, RichText, Sense, UiBuilder, Vec2};
 use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
 use tracing::Level;
 use tracing_subscriber::{self};
@@ -20,8 +20,8 @@ use tweaks::{
 };
 use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
-    button::{action_button, ButtonState},
-    switch::toggle_switch,
+    button::{ActionButton, ButtonState},
+    switch::ToggleSwitch,
     TweakWidget,
 };
 
@@ -217,11 +217,7 @@ impl MyApp {
     fn draw_tweak_container(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
         let desired_size = vec2(TWEAK_CONTAINER_WIDTH, TWEAK_CONTAINER_HEIGHT);
         let (rect, _) = ui.allocate_exact_size(desired_size, Sense::hover());
-        let mut child_ui = ui.child_ui(
-            rect,
-            egui::Layout::default().with_main_wrap(false),
-            Some(egui::UiStackInfo::new(egui::UiKind::Frame)),
-        );
+        let mut child_ui = ui.new_child(UiBuilder::new().max_rect(rect));
 
         // First, get an immutable reference to the tweak data
         let tweak_data = self.tweaks.get(&tweak_id).map(|tweak| {
@@ -267,7 +263,7 @@ impl MyApp {
     fn draw_toggle_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
         if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
             let mut is_enabled = tweak_entry.enabled;
-            let response_toggle = ui.add(toggle_switch(&mut is_enabled));
+            let response_toggle = ui.add(ToggleSwitch::new(&mut is_enabled));
 
             if response_toggle.changed() {
                 tweak_entry.enabled = is_enabled;
@@ -307,7 +303,7 @@ impl MyApp {
             };
 
             let mut button_state_mut = button_state;
-            let response_button = ui.add(action_button(&mut button_state_mut));
+            let response_button = ui.add(ActionButton::new(&mut button_state_mut));
 
             if response_button.clicked() && button_state == ButtonState::Default {
                 tweak_entry.status = TweakStatus::Applying;
@@ -335,7 +331,7 @@ impl MyApp {
             ui.add_space(STATUS_BAR_PADDING);
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new("v0.1.1a").font(FontId::proportional(16.0)));
+                ui.label(RichText::new("v0.1.3a").font(FontId::proportional(16.0)));
                 ui.separator();
 
                 let pending_reboot_count = self.count_tweaks_pending_reboot();
@@ -411,9 +407,6 @@ impl App for MyApp {
 
             self.draw_status_bar(ctx);
         }
-
-        // sleep for a bit to avoid locking the CPU core
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -453,7 +446,6 @@ fn main() -> eframe::Result<()> {
             .with_max_level(Level::DEBUG)
             .with_target(false)
             .init();
-        tracing::debug!("Logging initialized to terminal in debug mode.");
     }
 
     #[cfg(not(debug_assertions))]
@@ -476,7 +468,6 @@ fn main() -> eframe::Result<()> {
 
     let run_span = tracing::span!(Level::INFO, "Run Native");
     run_span.in_scope(|| {
-        tracing::trace!("Entering Run Native span.");
         eframe::run_native(
             "OC Tool",
             options,
