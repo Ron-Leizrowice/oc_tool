@@ -18,7 +18,7 @@ impl<'a> ActionButton<'a> {
     }
 }
 
-impl<'a> eframe::egui::Widget for ActionButton<'a> {
+impl eframe::egui::Widget for ActionButton<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         // Determine the label based on the current state
         let label = match *self.state {

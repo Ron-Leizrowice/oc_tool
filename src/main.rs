@@ -1,5 +1,6 @@
 // // src/main.rs
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod orchestrator;
 mod power;
 mod tweaks;
@@ -48,7 +49,7 @@ const BUTTON_DIMENSIONS: Vec2 = vec2(40.0, 20.0);
 
 /// Represents your application's main structure.
 pub struct MyApp {
-    pub tweaks: BTreeMap<TweakId, Tweak>,
+    pub tweaks: BTreeMap<TweakId, Tweak<'static>>,
     pub orchestrator: TaskOrchestrator,
 
     // State tracking for initial state reads
@@ -113,7 +114,9 @@ impl MyApp {
                     }
                 } else {
                     tweak.status = TweakStatus::Failed(
-                        result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                        result
+                            .error
+                            .unwrap_or_else(|| anyhow::Error::msg("Unknown error")),
                     );
                 }
             }
@@ -220,13 +223,10 @@ impl MyApp {
         let mut child_ui = ui.new_child(UiBuilder::new().max_rect(rect));
 
         // First, get an immutable reference to the tweak data
-        let tweak_data = self.tweaks.get(&tweak_id).map(|tweak| {
-            (
-                tweak.name.clone(),
-                tweak.description.clone(),
-                tweak.widget.clone(),
-            )
-        });
+        let tweak_data = self
+            .tweaks
+            .get(&tweak_id)
+            .map(|tweak| (tweak.name, tweak.description, tweak.widget));
 
         if let Some((tweak_name, tweak_description, tweak_widget)) = tweak_data {
             // Now use the tweak data to create the UI
@@ -241,11 +241,11 @@ impl MyApp {
                         // Draw tweak name and description
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.label(
-                                RichText::new(&tweak_name)
+                                RichText::new(tweak_name)
                                     .text_style(egui::TextStyle::Body)
                                     .strong(),
                             )
-                            .on_hover_text(&tweak_description);
+                            .on_hover_text(tweak_description);
                         });
 
                         // Draw the appropriate widget using a mutable reference to `self`
@@ -283,7 +283,7 @@ impl MyApp {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        tweak_entry.status = TweakStatus::Failed(e.to_string());
+                        tweak_entry.status = TweakStatus::Failed(anyhow::anyhow!(e));
                     }
                 }
             }
@@ -315,7 +315,7 @@ impl MyApp {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        tweak_entry.status = TweakStatus::Failed(e.to_string());
+                        tweak_entry.status = TweakStatus::Failed(e);
                     }
                 }
             }
@@ -331,7 +331,7 @@ impl MyApp {
             ui.add_space(STATUS_BAR_PADDING);
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new("v0.1.2a").font(FontId::proportional(16.0)));
+                ui.label(RichText::new("v0.1.3a").font(FontId::proportional(16.0)));
                 ui.separator();
 
                 let pending_reboot_count = self.count_tweaks_pending_reboot();

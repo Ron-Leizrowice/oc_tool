@@ -17,18 +17,17 @@ use registry::RegistryTweak;
 use crate::widgets::TweakWidget;
 
 /// Represents a single tweak that can be applied to the system.
-#[derive(Clone)]
-pub struct Tweak {
+pub struct Tweak<'a> {
     /// Display name of the tweak.
-    pub name: String,
+    pub name: &'a str,
     /// Description of the tweak and its effects, shown in hover tooltip.
-    pub description: String,
+    pub description: &'a str,
     /// Category of the tweak, used for grouping tweaks in the UI.
     pub category: TweakCategory,
     /// The method used to apply or revert the tweak.
     pub method: Arc<dyn TweakMethod>,
     /// The widget to use for each tweak
-    pub widget: TweakWidget,
+    pub widget: &'a TweakWidget,
     /// Indicates whether the tweak is currently enabled.
     pub enabled: bool,
     /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
@@ -51,12 +50,12 @@ pub trait TweakMethod: Send + Sync {
     fn revert(&self) -> Result<(), Error>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum TweakStatus {
     Idle,
     Applying,
     Reverting,
-    Failed(String),
+    Failed(Error),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,12 +87,12 @@ impl TweakCategory {
     }
 }
 
-impl Tweak {
+impl<'a> Tweak<'a> {
     pub fn registry_tweak(
-        name: String,
-        description: String,
+        name: &'a str,
+        description: &'a str,
         category: TweakCategory,
-        method: RegistryTweak,
+        method: RegistryTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
         Self {
@@ -101,7 +100,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::Toggle,
+            widget: &TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -110,15 +109,15 @@ impl Tweak {
     }
 
     pub fn powershell_tweak(
-        name: String,
-        description: String,
+        name: &'a str,
+        description: &'a str,
         category: TweakCategory,
-        method: PowershellTweak,
+        method: PowershellTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
         let widget = match method.undo_script {
-            Some(_) => TweakWidget::Toggle,
-            None => TweakWidget::Button,
+            Some(_) => &TweakWidget::Toggle,
+            None => &TweakWidget::Button,
         };
 
         Self {
@@ -135,10 +134,10 @@ impl Tweak {
     }
 
     pub fn group_policy_tweak(
-        name: String,
-        description: String,
+        name: &'a str,
+        description: &'a str,
         category: TweakCategory,
-        method: GroupPolicyTweak,
+        method: GroupPolicyTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
         Self {
@@ -146,7 +145,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::Toggle,
+            widget: &TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,
@@ -155,11 +154,11 @@ impl Tweak {
     }
 
     pub fn rust_tweak<M: TweakMethod + 'static>(
-        name: String,
-        description: String,
+        name: &'a str,
+        description: &'a str,
         category: TweakCategory,
         method: M,
-        widget: TweakWidget,
+        widget: &'a TweakWidget,
         requires_reboot: bool,
     ) -> Self {
         Self {
@@ -176,8 +175,8 @@ impl Tweak {
     }
 
     pub fn msr_tweak(
-        name: String,
-        description: String,
+        name: &'a str,
+        description: &'a str,
         category: TweakCategory,
         method: MSRTweak,
         requires_reboot: bool,
@@ -187,7 +186,7 @@ impl Tweak {
             description,
             category,
             method: Arc::new(method),
-            widget: TweakWidget::Toggle,
+            widget: &TweakWidget::Toggle,
             requires_reboot,
             status: TweakStatus::Idle,
             enabled: false,

@@ -62,12 +62,12 @@ impl SlowMode {
             // Find the setting by name
             if let Some(setting) = find_setting_by_name(&power_subgroups, required_name) {
                 // Assign the desired value based on the setting's purpose
-                let value = match required_name {
-                    &"Processor performance core parking min cores" => SLOW_MODE_MAX_CORES,
-                    &"Processor performance increase threshold" => SLOW_MODE_PERF_INC_THRESHOLD,
-                    &"Processor performance increase time" => SLOW_MODE_PERF_INC_TIME,
-                    &"Energy/performance preference" => SLOW_MODE_ENERGY_PERF_PREFERENCE,
-                    &"Processor maximum frequency" => SLOW_MODE_PROC_FREQ_MAX,
+                let value = match *required_name {
+                    "Processor performance core parking min cores" => SLOW_MODE_MAX_CORES,
+                    "Processor performance increase threshold" => SLOW_MODE_PERF_INC_THRESHOLD,
+                    "Processor performance increase time" => SLOW_MODE_PERF_INC_TIME,
+                    "Energy/performance preference" => SLOW_MODE_ENERGY_PERF_PREFERENCE,
+                    "Processor maximum frequency" => SLOW_MODE_PROC_FREQ_MAX,
                     _ => continue, // Skip if the setting is not recognized
                 };
 
