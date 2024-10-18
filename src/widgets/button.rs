@@ -1,9 +1,6 @@
 // src/widgets/button.rs
 
-use egui::{self, FontId, Rounding, Sense};
-
-const DEFAULT_TEXT: &str = "Run";
-const IN_PROGRESS_TEXT: &str = "...";
+use eframe::egui::{FontId, Response, Rounding, Sense, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonState {
@@ -11,16 +8,26 @@ pub enum ButtonState {
     InProgress,
 }
 
-pub fn action_button(state: &mut ButtonState) -> impl egui::Widget + '_ {
-    move |ui: &mut egui::Ui| {
+pub struct ActionButton<'a> {
+    state: &'a mut ButtonState,
+}
+
+impl<'a> ActionButton<'a> {
+    pub fn new(state: &'a mut ButtonState) -> Self {
+        Self { state }
+    }
+}
+
+impl<'a> eframe::egui::Widget for ActionButton<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
         // Determine the label based on the current state
-        let label = match *state {
-            ButtonState::Default => DEFAULT_TEXT,
-            ButtonState::InProgress => IN_PROGRESS_TEXT,
+        let label = match *self.state {
+            ButtonState::Default => "Run",
+            ButtonState::InProgress => "...",
         };
 
         // Determine if the button is clickable
-        let is_clickable = matches!(*state, ButtonState::Default);
+        let is_clickable = matches!(*self.state, ButtonState::Default);
 
         // Set the interaction sense based on the button state
         let sense = if is_clickable {
@@ -34,14 +41,9 @@ pub fn action_button(state: &mut ButtonState) -> impl egui::Widget + '_ {
 
         // Handle button clicks
         if is_clickable && response.clicked() {
-            *state = ButtonState::InProgress;
+            *self.state = ButtonState::InProgress;
             response.mark_changed();
         }
-
-        // Provide widget information for accessibility and debugging
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), false, label)
-        });
 
         // Render the button if it's visible
         if ui.is_rect_visible(rect) {
@@ -54,8 +56,8 @@ pub fn action_button(state: &mut ButtonState) -> impl egui::Widget + '_ {
                 .rect_stroke(rect, Rounding::same(5.0), visuals.bg_stroke);
 
             // Layout the text centered within the button
-            let galley = ui.fonts(|f| {
-                f.layout_no_wrap(
+            let galley = ui.fonts(|fonts| {
+                fonts.layout_no_wrap(
                     label.to_string(),
                     FontId::proportional(12.0),
                     visuals.text_color(),

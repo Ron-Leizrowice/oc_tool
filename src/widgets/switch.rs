@@ -1,41 +1,39 @@
 // src/widgets/switch.rs
 
-use egui::{self, Sense};
+use eframe::egui::{lerp, pos2, vec2, Response, Sense, Ui};
 
-/// A simple toggle switch widget.
-///
-/// # Parameters
-/// - `on`: A mutable reference to a boolean value that indicates the state of the switch.
-///
-/// # Returns
-/// An [`egui::Widget`] that can be used to render the toggle switch.
-pub fn toggle_switch(on: &mut bool) -> impl egui::Widget + '_ {
-    move |ui: &mut egui::Ui| {
+pub struct ToggleSwitch<'a> {
+    state: &'a mut bool,
+}
+
+impl<'a> ToggleSwitch<'a> {
+    pub fn new(state: &'a mut bool) -> Self {
+        Self { state }
+    }
+}
+
+impl<'a> eframe::egui::Widget for ToggleSwitch<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
         // Create the ToggleSwitch widget.
-        let desired_size = ui.spacing().interact_size.y * egui::vec2(2.0, 1.0);
+        let desired_size = ui.spacing().interact_size.y * vec2(2.0, 1.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
 
         // Handle click events.
         if response.clicked() {
-            *on = !*on;
+            *self.state = !*self.state;
             response.mark_changed();
         }
 
-        // Provide widget information for accessibility.
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), false, "")
-        });
-
         // Draw the toggle based on the current state.
         if ui.is_rect_visible(rect) {
-            let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
-            let visuals = ui.style().interact_selectable(&response, *on);
+            let how_on = ui.ctx().animate_bool_responsive(response.id, *self.state);
+            let visuals = ui.style().interact_selectable(&response, *self.state);
             let rect = rect.expand(visuals.expansion);
             let radius = 0.5 * rect.height();
             ui.painter()
                 .rect(rect, radius, visuals.bg_fill, visuals.bg_stroke);
-            let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
-            let center = egui::pos2(circle_x, rect.center().y);
+            let circle_x = lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
+            let center = pos2(circle_x, rect.center().y);
             ui.painter()
                 .circle(center, 0.75 * radius, visuals.bg_fill, visuals.fg_stroke);
         }

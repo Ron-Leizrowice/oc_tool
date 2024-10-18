@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'   # This workflow triggers when you push a tag that starts with "v"
+      - 'v*' 
 
 jobs:
   build:
@@ -19,15 +19,35 @@ jobs:
       - name: Build Release
         run: cargo build --profile release-lto
 
+      - name: Ensure Additional Files Exist
+        run: |
+          if (!(Test-Path target\release-lto\WinRing0x64.sys)) {
+            throw "WinRing0x64.sys not found!"
+          }
+          if (!(Test-Path target\release-lto\WinRing0x64.dll)) {
+            throw "WinRing0x64.dll not found!"
+          }
+
+      - name: Create Release Zip
+        shell: pwsh
+        run: |
+          $files = @(
+            'target\release-lto\oc_tool.exe',
+            'target\release-lto\WinRing0x64.sys',
+            'target\release-lto\WinRing0x64.dll'
+          )
+          Compress-Archive -Path $files -DestinationPath oc_tool.zip -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: oc-tool
-          path: target/release/oc_tool.exe
+          path: oc_tool.zip
 
   release:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -37,6 +57,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: oc_tool.exe
+          files: oc_tool.zip
         env:
           GITHUB_TOKEN: ${{ secrets.FINE_GRAINED_TOKEN }}
