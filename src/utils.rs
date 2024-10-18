@@ -1,8 +1,6 @@
 // src/utils.rs
 
-use std::process::Command;
-
-use anyhow::{anyhow, Result as AnyResult};
+use anyhow::Result as AnyResult;
 use windows::{
     core::PWSTR as CorePWSTR,
     Win32::{
@@ -14,6 +12,8 @@ use windows::{
         },
     },
 };
+
+use crate::tweaks::powershell::execute_powershell_script;
 
 /// Checks if the current process is running with elevated (administrator) privileges.
 ///
@@ -58,13 +58,7 @@ pub fn is_elevated() -> bool {
 /// - `Err(anyhow::Error)` if there was an error executing the reboot command.
 pub fn reboot_system() -> AnyResult<()> {
     // For Windows, use the 'shutdown' command with '/r' flag to reboot
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("shutdown")
-            .args(["/r", "/t", "0"])
-            .status()
-            .map_err(|e| anyhow!("Failed to execute shutdown command: {}", e))?;
-    }
+    execute_powershell_script("Restart-Computer -Force -Confirm:$false")?;
 
     Ok(())
 }
@@ -73,11 +67,8 @@ pub fn reboot_system() -> AnyResult<()> {
 /// Requires administrator privileges.
 /// Note: This command works on Windows 10 and later.
 pub fn reboot_into_bios() -> AnyResult<()> {
-    Command::new("shutdown")
-        .args(["/r", "/fw", "/t", "0"])
-        .status()
-        .map(|_| ())
-        .map_err(|e| anyhow!("Failed to execute shutdown into BIOS command: {}", e))
+    execute_powershell_script("Restart-Computer -Force -Firmware")?;
+    Ok(())
 }
 
 /// Retrieves the current username using the Windows API.
