@@ -248,13 +248,12 @@ pub fn verify_winring0_setup() -> anyhow::Result<()> {
     let powershell_cmd =
         r#"(Get-Service -Name WinRing0x64 | Select-Object -Property Status) -Match "Running""#;
 
-    let output = std::process::Command::new("powershell")
-        .arg("-Command")
-        .arg(powershell_cmd)
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run PowerShell command: {}", e))?;
+    let output = match execute_powershell_script(powershell_cmd) {
+        Ok(output) => output,
+        Err(e) => return Err(anyhow::anyhow!("Failed to run PowerShell command: {}", e)),
+    };
 
-    if !output.status.success() || !String::from_utf8_lossy(&output.stdout).contains("True") {
+    if !output.contains("True") {
         Err(anyhow::anyhow!(
             "WinRing0 service is not running. Please start the service and try again."
         ))

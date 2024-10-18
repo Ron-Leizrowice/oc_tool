@@ -2,7 +2,6 @@ mod disable_processor_idle_states;
 mod kill_explorer;
 mod kill_non_critical_services;
 mod low_res_mode;
-mod process_idle_tasks;
 mod slow_mode;
 mod ultimate_performance_plan;
 use std::collections::BTreeMap;
@@ -11,7 +10,6 @@ use disable_processor_idle_states::DisableProcessIdleStates;
 use kill_explorer::KillExplorerTweak;
 use kill_non_critical_services::KillNonCriticalServicesTweak;
 use low_res_mode::LowResMode;
-use process_idle_tasks::ProcessIdleTasksTweak;
 use slow_mode::SlowMode;
 use ultimate_performance_plan::UltimatePerformancePlan;
 
@@ -180,19 +178,6 @@ pub fn disable_process_idle_states<'a>() -> Tweak<'a> {
         TweakCategory::Power,
         DisableProcessIdleStates::new(),
         &TweakWidget::Toggle,
-        false,
-    )
-}
-
-pub fn process_idle_tasks<'a>() -> Tweak<'a> {
-    Tweak::rust_tweak(
-        "Process Idle Tasks",
-        "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.",
-        TweakCategory::Action,
-        ProcessIdleTasksTweak{
-            id: TweakId::ProcessIdleTasks,
-        },
-        &TweakWidget::Button,
         false,
     )
 }
@@ -1281,6 +1266,35 @@ pub fn enable_mcsss<'a>() -> Tweak<'a> {
             }],
         },
         true, // requires reboot
+    )
+}
+
+
+pub fn process_idle_tasks<'a>() -> Tweak<'a> {
+    Tweak::powershell_tweak(
+        "Process Idle Tasks",
+        "Runs the Process Idle Tasks command to optimize system performance by processing idle tasks and background maintenance activities.",
+        TweakCategory::System,
+        PowershellTweak {
+            id: TweakId::ProcessIdleTasks,
+            read_script: None,
+            apply_script: r#"
+                $advapi32 = Add-Type -MemberDefinition @"
+                    [DllImport("advapi32.dll", EntryPoint="ProcessIdleTasks")]
+                    public static extern bool ProcessIdleTasks();
+                "@ -Name "Advapi32" -Namespace "Win32" -PassThru
+
+                if ($advapi32::ProcessIdleTasks()) {
+                    Write-Output "Process Idle Tasks completed successfully."
+                } else {
+                    Write-Error "Failed to run Process Idle Tasks."
+                }
+            "#,
+            undo_script: None,
+            target_state: None,
+            
+        },
+        false, // does not require reboot
     )
 }
 
