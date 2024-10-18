@@ -28,20 +28,20 @@ use super::{definitions::TweakId, TweakMethod};
 
 /// Represents a PowerShell-based tweak, including scripts to read, apply, and undo the tweak.
 #[derive(Clone, Debug)]
-pub struct PowershellTweak {
+pub struct PowershellTweak<'a> {
     /// The unique ID of the tweak
     pub id: TweakId,
     /// PowerShell script to read the current state of the tweak.
-    pub read_script: Option<String>,
+    pub read_script: Option<&'a str>,
     /// PowerShell script to apply the tweak.
-    pub apply_script: String,
+    pub apply_script: &'a str,
     /// PowerShell script to undo the tweak.
-    pub undo_script: Option<String>,
+    pub undo_script: Option<&'a str>,
     /// The target state of the tweak (e.g., the expected output of the read script when the tweak is enabled).
-    pub target_state: Option<String>,
+    pub target_state: Option<&'a str>,
 }
 
-impl PowershellTweak {
+impl PowershellTweak<'_> {
     /// Reads the current state of the tweak by executing the `read_script`.
     ///
     /// # Returns
@@ -81,7 +81,7 @@ impl PowershellTweak {
     }
 }
 
-impl TweakMethod for PowershellTweak {
+impl TweakMethod for PowershellTweak<'_> {
     /// Checks if the tweak is currently enabled by comparing the current value to the default value.
     /// If the current value matches the default value, the tweak is considered enabled.
     ///
@@ -139,7 +139,7 @@ impl TweakMethod for PowershellTweak {
         );
 
         // Execute the PowerShell script using the custom function
-        let output = execute_powershell_script(&self.apply_script).with_context(|| {
+        let output = execute_powershell_script(self.apply_script).with_context(|| {
             format!(
                 "{:?} -> Failed to execute apply PowerShell script '{}'",
                 self.id, &self.apply_script
@@ -203,10 +203,11 @@ impl TweakMethod for PowershellTweak {
 /// * `Err(anyhow::Error)` if the script execution fails.
 pub fn execute_powershell_script(script: &str) -> Result<String> {
     // Step 1: Create security attributes to allow handle inheritance
-    let mut sa = SECURITY_ATTRIBUTES::default();
-    sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
-    sa.bInheritHandle = TRUE;
-    sa.lpSecurityDescriptor = std::ptr::null_mut();
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        bInheritHandle: TRUE,
+        lpSecurityDescriptor: std::ptr::null_mut(),
+    };
 
     // Step 2: Create pipes for stdout and stderr
     let mut stdout_read: HANDLE = HANDLE(std::ptr::null_mut());
@@ -221,7 +222,7 @@ pub fn execute_powershell_script(script: &str) -> Result<String> {
             .context("Failed to create stdout pipe")?;
 
         // Ensure the read handle is not inherited
-        SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT.0 as u32, HANDLE_FLAGS(0))
+        SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0))
             .ok()
             .context("Failed to set handle information for stdout_read")?;
 
@@ -231,18 +232,20 @@ pub fn execute_powershell_script(script: &str) -> Result<String> {
             .context("Failed to create stderr pipe")?;
 
         // Ensure the read handle is not inherited
-        SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT.0 as u32, HANDLE_FLAGS(0))
+        SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0))
             .ok()
             .context("Failed to set handle information for stderr_read")?;
     }
 
     // Step 3: Set up the STARTUPINFOA structure
-    let mut startup_info = STARTUPINFOA::default();
-    startup_info.cb = std::mem::size_of::<STARTUPINFOA>() as u32;
-    startup_info.dwFlags |= STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
-    startup_info.wShowWindow = SW_HIDE.0 as u16;
-    startup_info.hStdOutput = stdout_write;
-    startup_info.hStdError = stderr_write;
+    let startup_info = STARTUPINFOA {
+        cb: std::mem::size_of::<STARTUPINFOA>() as u32,
+        dwFlags: STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES,
+        wShowWindow: SW_HIDE.0 as u16,
+        hStdOutput: stdout_write,
+        hStdError: stderr_write,
+        ..Default::default()
+    };
     // Optionally, you can redirect stdin if needed:
     // startup_info.hStdInput = stdin_read;
 
@@ -276,12 +279,12 @@ pub fn execute_powershell_script(script: &str) -> Result<String> {
             CREATE_NO_WINDOW,  // dwCreationFlags
             None,              // lpEnvironment
             None,              // lpCurrentDirectory
-            &mut startup_info, // lpStartupInfo
+            &startup_info,     // lpStartupInfo
             &mut process_info, // lpProcessInformation
         )
     };
 
-    if !success.is_ok() {
+    if success.is_err() {
         error!("Failed to create PowerShell process.");
         return Err(anyhow::anyhow!("Failed to execute PowerShell script"));
     }

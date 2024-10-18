@@ -1,5 +1,7 @@
 // src/tweaks/msr.rs
 
+use std::ffi::CStr;
+
 use windows::{
     core::*,
     Win32::{
@@ -12,6 +14,12 @@ use super::{definitions::TweakId, powershell::execute_powershell_script, TweakMe
 
 pub const WINRING0_DLL: &str = "WinRing0x64.dll";
 pub const WINRING0_SYS: &str = "WinRing0x64.sys";
+
+// SAFETY: The byte strings are valid C string because they is null-terminated.
+static INITIALIZE_OLS: &CStr = c"InitializeOls";
+static DEINITIALIZE_OLS: &CStr = c"DeinitializeOls";
+static WRMSRTX: &CStr = c"WrmsrTx";
+static RDMSRTX: &CStr = c"RdmsrTx";
 
 // Ensure MSRTweak implements Clone
 #[derive(Clone)]
@@ -121,7 +129,7 @@ pub struct WinRing0 {
 
 impl WinRing0 {
     pub fn new() -> windows::core::Result<Self> {
-        let winring0_dll_path = std::env::current_dir()?.join("WinRing0x64.dll");
+        let winring0_dll_path = std::env::current_dir()?.join(WINRING0_DLL);
 
         unsafe {
             let dll_path_w: Vec<u16> = winring0_dll_path
@@ -133,20 +141,20 @@ impl WinRing0 {
             let lib = LoadLibraryW(PCWSTR(dll_path_w.as_ptr()))?;
 
             let _initialize: InitializeOls = std::mem::transmute(
-                GetProcAddress(lib, PCSTR(b"InitializeOls\0".as_ptr()))
+                GetProcAddress(lib, PCSTR(INITIALIZE_OLS.as_ptr() as *const u8))
                     .ok_or_else(|| Error::new(E_FAIL, "Failed to get InitializeOls"))?,
             );
 
             let deinitialize: DeinitializeOls = std::mem::transmute(
-                GetProcAddress(lib, PCSTR(b"DeinitializeOls\0".as_ptr()))
+                GetProcAddress(lib, PCSTR(DEINITIALIZE_OLS.as_ptr() as *const u8))
                     .ok_or(Error::new(E_FAIL, "Failed to get DeinitializeOls"))?,
             );
             let read_msr: ReadMsrTx = std::mem::transmute(
-                GetProcAddress(lib, PCSTR(b"RdmsrTx\0".as_ptr()))
+                GetProcAddress(lib, PCSTR(RDMSRTX.as_ptr() as *const u8))
                     .ok_or(Error::new(E_FAIL, "Failed to get Rdmsr"))?,
             );
             let write_msr: WriteMsrTx = std::mem::transmute(
-                GetProcAddress(lib, PCSTR(b"WrmsrTx\0".as_ptr()))
+                GetProcAddress(lib, PCSTR(WRMSRTX.as_ptr() as *const u8))
                     .ok_or(Error::new(E_FAIL, "Failed to get Wrmsr"))?,
             );
 
@@ -246,17 +254,13 @@ pub fn verify_winring0_setup() -> anyhow::Result<()> {
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run PowerShell command: {}", e))?;
 
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
+    if !output.status.success() || !String::from_utf8_lossy(&output.stdout).contains("True") {
+        Err(anyhow::anyhow!(
             "WinRing0 service is not running. Please start the service and try again."
-        ));
-    } else if !String::from_utf8_lossy(&output.stdout).contains("True") {
-        return Err(anyhow::anyhow!(
-            "WinRing0 service is not running. Please start the service and try again."
-        ));
+        ))
+    } else {
+        Ok(())
     }
-
-    Ok(())
 }
 
 pub fn setup_winring0_service() -> anyhow::Result<()> {
@@ -280,6 +284,6 @@ pub fn setup_winring0_service() -> anyhow::Result<()> {
 "#;
     match execute_powershell_script(script) {
         Ok(_) => Ok(()),
-        Err(e) => return Err(anyhow::anyhow!("Failed to create WinRing0 service: {}", e)),
+        Err(e) => Err(anyhow::anyhow!("Failed to create WinRing0 service: {}", e)),
     }
 }

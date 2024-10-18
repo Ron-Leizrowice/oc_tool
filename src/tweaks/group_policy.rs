@@ -26,11 +26,11 @@ pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
 
 /// Represents a Group Policy tweak, including the policy key and desired value.
 #[derive(Clone, Debug)]
-pub struct GroupPolicyTweak {
+pub struct GroupPolicyTweak<'a> {
     /// Unique ID
     pub id: TweakId,
     /// The policy key (e.g., "SeLockMemoryPrivilege").
-    pub key: String,
+    pub key: &'a str,
     /// The desired value for the policy.
     pub value: GroupPolicyValue,
 }
@@ -42,7 +42,7 @@ pub enum GroupPolicyValue {
     Disabled,
 }
 
-impl GroupPolicyTweak {
+impl GroupPolicyTweak<'_> {
     /// Reads the current value of the Group Policy tweak.
     ///
     /// # Returns
@@ -357,7 +357,7 @@ impl GroupPolicyTweak {
     }
 }
 
-impl TweakMethod for GroupPolicyTweak {
+impl TweakMethod for GroupPolicyTweak<'_> {
     /// Checks if the tweak is currently enabled by comparing the current value to the desired value.
     ///
     /// # Returns
@@ -399,7 +399,7 @@ impl TweakMethod for GroupPolicyTweak {
     fn apply(&self) -> Result<(), anyhow::Error> {
         tracing::info!("{:?} -> Applying Group Policy tweak.", self.id);
         // Assign the privilege to the current user
-        match self.modify_user_rights(&self.key, true) {
+        match self.modify_user_rights(self.key, true) {
             Ok(_) => Ok(()),
             Err(e) => {
                 tracing::error!(
@@ -421,7 +421,7 @@ impl TweakMethod for GroupPolicyTweak {
     fn revert(&self) -> Result<(), anyhow::Error> {
         tracing::info!("{:?} -> Reverting Group Policy tweak.", self.id);
         // Remove the privilege from the current user
-        match self.modify_user_rights(&self.key, false) {
+        match self.modify_user_rights(self.key, false) {
             Ok(_) => Ok(()),
             Err(e) => {
                 tracing::error!(

@@ -53,9 +53,9 @@ pub fn get_all_power_schemes() -> Result<Vec<PowerScheme>, windows::core::Error>
                 index += 1;
             }
             Err(e) => {
-                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0 as u32 {
-                    break;
-                } else if e.message() == "The operation completed successfully." {
+                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0
+                    || e.message() == "The operation completed successfully."
+                {
                     break;
                 } else {
                     return Err(e);
@@ -104,9 +104,9 @@ pub fn enumerate_power_subgroups_and_settings(
                 index += 1;
             }
             Err(e) => {
-                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0 as u32 {
-                    break;
-                } else if e.message() == "The operation completed successfully." {
+                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0
+                    || e.message() == "The operation completed successfully."
+                {
                     break;
                 } else {
                     tracing::error!("Error: {:?}", e);
@@ -146,9 +146,9 @@ fn enumerate_power_settings_within_subgroup(
                 index += 1;
             }
             Err(e) => {
-                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0 as u32 {
-                    break;
-                } else if e.message() == "The operation completed successfully." {
+                if e.code().0 as u32 == ERROR_NO_MORE_ITEMS.0
+                    || e.message() == "The operation completed successfully."
+                {
                     break;
                 } else {
                     return Err(e);

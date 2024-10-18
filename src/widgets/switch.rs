@@ -12,7 +12,7 @@ impl<'a> ToggleSwitch<'a> {
     }
 }
 
-impl<'a> eframe::egui::Widget for ToggleSwitch<'a> {
+impl eframe::egui::Widget for ToggleSwitch<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         // Create the ToggleSwitch widget.
         let desired_size = ui.spacing().interact_size.y * vec2(2.0, 1.0);

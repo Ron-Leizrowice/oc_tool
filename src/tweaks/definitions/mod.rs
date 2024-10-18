@@ -74,7 +74,7 @@ pub enum TweakId {
 }
 
 /// Initializes all tweaks with their respective configurations.
-pub fn all() -> BTreeMap<TweakId, Tweak> {
+pub fn all<'a>() -> BTreeMap<TweakId, Tweak<'a>> {
     BTreeMap::from_iter(vec![
         (TweakId::ProcessIdleTasks, process_idle_tasks()),
         (TweakId::LowResMode, low_res_mode()),
@@ -173,86 +173,86 @@ pub fn all() -> BTreeMap<TweakId, Tweak> {
     ])
 }
 
-pub fn disable_process_idle_states() -> Tweak {
+pub fn disable_process_idle_states<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Disable Process Idle States".to_string(),
-        "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.".to_string(),
+        "Disable Process Idle States",
+        "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.",
         TweakCategory::Power,
         DisableProcessIdleStates::new(),
-        TweakWidget::Toggle,
+        &TweakWidget::Toggle,
         false,
     )
 }
 
-pub fn process_idle_tasks() -> Tweak {
+pub fn process_idle_tasks<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Process Idle Tasks".to_string(),
-        "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.".to_string(),
+        "Process Idle Tasks",
+        "Forces the execution of scheduled background tasks that are normally run during system idle time. This helps free up system resources by completing these tasks immediately, improving overall system responsiveness and optimizing resource allocation. It can also reduce latency caused by deferred operations in critical system processes.",
         TweakCategory::Action,
         ProcessIdleTasksTweak{
             id: TweakId::ProcessIdleTasks,
         },
-        TweakWidget::Button,
+        &TweakWidget::Button,
         false,
     )
 }
 
-pub fn kill_all_non_critical_services() -> Tweak {
+pub fn kill_all_non_critical_services<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Kill All Non-Critical Services".to_string(),
-        "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.".to_string(),
+        "Kill All Non-Critical Services",
+        "Stops all non-critical services to free up system resources and improve performance. This tweak may cause system instability or data loss.",
         TweakCategory::Services,
         KillNonCriticalServicesTweak {
             id: TweakId::KillAllNonCriticalServices,
         },
-        TweakWidget::Button,
+        &TweakWidget::Button,
         false,
     )
 }
 
 /// Initializes the Kill Explorer tweak.
-pub fn kill_explorer() -> Tweak {
+pub fn kill_explorer<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Kill Explorer".to_string(),
-        "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.".to_string(),
+        "Kill Explorer",
+        "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.",
         TweakCategory::Action,
         KillExplorerTweak {
             id: TweakId::KillExplorer,
         },
-        TweakWidget::Toggle,
+        &TweakWidget::Toggle,
         false,
     )
 }
 
-pub fn disable_hpet() -> Tweak {
+pub fn disable_hpet<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Dynamic Tick".to_string(),
-        "Disables the dynamic tick feature, which normally reduces timer interrupts during idle periods to conserve power. By disabling dynamic tick, the system maintains a constant rate of timer interrupts, improving performance in real-time applications by reducing latency and jitter. This tweak is useful in scenarios where consistent, low-latency processing is required, but it may increase power consumption as the CPU will not enter low-power states as frequently.".to_string(),
+        "Disable Dynamic Tick",
+        "Disables the dynamic tick feature, which normally reduces timer interrupts during idle periods to conserve power. By disabling dynamic tick, the system maintains a constant rate of timer interrupts, improving performance in real-time applications by reducing latency and jitter. This tweak is useful in scenarios where consistent, low-latency processing is required, but it may increase power consumption as the CPU will not enter low-power states as frequently.",
         TweakCategory::System,
         PowershellTweak {
             id: TweakId::DisableHPET,
-            read_script: Some(r#"(bcdedit /enum | Select-String "useplatformclock").ToString().Trim()"#.to_string()),
+            read_script: Some(r#"(bcdedit /enum | Select-String "useplatformclock").ToString().Trim()"#),
 
             apply_script: r#"
             bcdedit /deletevalue useplatformclock
             bcdedit /set disabledynamictick yes
-            "#.trim().to_string(),
+            "#.trim(),
 
             undo_script: Some(r#"
             bcdedit /set useplatformclock true
             bcdedit /set disabledynamictick no
-            "#.trim().to_string()),
+            "#.trim()),
 
-            target_state: Some("useplatformclock        Yes".trim().to_string()),
+            target_state: Some("useplatformclock        Yes".trim()),
         },
         true,
     )
 }
 
-pub fn disable_ram_compression() -> Tweak {
+pub fn disable_ram_compression<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable RAM Compression".to_string(),
-        "Disables the RAM compression feature in Windows to potentially improve system performance by reducing CPU overhead. This may lead to higher memory usage.".to_string(),
+        "Disable RAM Compression",
+        "Disables the RAM compression feature in Windows to potentially improve system performance by reducing CPU overhead. This may lead to higher memory usage.",
         TweakCategory::Memory,
         PowershellTweak {
             id: TweakId::DisableRamCompression,
@@ -260,29 +260,26 @@ pub fn disable_ram_compression() -> Tweak {
                 r#"
 (Get-MMAgent | Out-String -Stream | Select-String -Pattern "MemoryCompression").ToString().Trim() -Match "False"
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
             apply_script:
                 r#"Disable-MMAgent -mc"#
-                .trim()
-                .to_string(),
+                .trim(),
             undo_script: Some(
                 r#"Enable-MMAgent -mc"#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
-            target_state: Some("True".to_string()),
+            target_state: Some("True"),
         },
         true,
 
     )
 }
 
-pub fn disable_local_firewall() -> Tweak {
+pub fn disable_local_firewall<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Local Firewall".to_string(),
-        "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.".to_string(),
+        "Disable Local Firewall",
+        "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.",
         TweakCategory::Security,
         PowershellTweak {
             id: TweakId::DisableLocalFirewall,
@@ -296,8 +293,7 @@ pub fn disable_local_firewall() -> Tweak {
                     "Disabled"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
             apply_script:
                 r#"
@@ -308,8 +304,7 @@ pub fn disable_local_firewall() -> Tweak {
                     Write-Error "Failed to apply Disable Local Firewall Tweaks: $_"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             undo_script: Some(
                 r#"
                 try {
@@ -319,20 +314,19 @@ pub fn disable_local_firewall() -> Tweak {
                     Write-Error "Failed to revert Disable Local Firewall Tweaks: $_"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
-            target_state: Some("Enabled".to_string()),
+            target_state: Some("Enabled"),
         },
         true,
 
     )
 }
 
-pub fn disable_success_auditing() -> Tweak {
+pub fn disable_success_auditing<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Success Auditing".to_string(),
-        "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.".to_string(),
+        "Disable Success Auditing",
+        "Disables auditing of successful events across all categories, reducing the volume of event logs and system overhead. Security events in the Windows Security log are not affected.",
         TweakCategory::Security,
         PowershellTweak {
             id: TweakId::DisableSuccessAuditing,
@@ -351,8 +345,7 @@ if ($auditSettings.Count -gt 0) {
 # Output the result
 Write-Output $result
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
             apply_script:
                 r#"
@@ -363,8 +356,7 @@ Write-Output $result
                     Write-Error "Failed to apply Disable Success Auditing: $_"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
 
             undo_script: Some(
                 r#"
@@ -375,20 +367,19 @@ Write-Output $result
                     Write-Error "Failed to revert Disable Success Auditing: $_"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
-            target_state: Some("Enabled".to_string()),
+            target_state: Some("Enabled"),
         },
         true,
 
     )
 }
 
-pub fn disable_pagefile() -> Tweak {
+pub fn disable_pagefile<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Pagefile".to_string(),
-        "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.".to_string(),
+        "Disable Pagefile",
+        "Disables the Windows page file, which is used as virtual memory when physical memory is full. This tweak can improve system performance by reducing disk I/O and preventing paging, but it may cause system instability or application crashes if the system runs out of memory.",
         TweakCategory::Memory,
         PowershellTweak {
             id: TweakId::DisablePagefile,
@@ -401,25 +392,23 @@ pub fn disable_pagefile() -> Tweak {
                 } else {
                     "Disabled"
                 }
-                "#
-
-                .to_string(),
+                "#.trim(),
             ),
-            apply_script:"fsutil behavior set encryptpagingfile 0".to_string(),
+            apply_script:"fsutil behavior set encryptpagingfile 0",
             undo_script: Some(
-               "fsutil behavior set encryptpagingfile 1".to_string(),
+               "fsutil behavior set encryptpagingfile 1",
             ),
-            target_state: Some("Enabled".to_string()),
+            target_state: Some("Enabled"),
         },
         true,
 
     )
 }
 
-pub fn disable_data_execution_prevention() -> Tweak {
+pub fn disable_data_execution_prevention<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Data Execution Prevention".to_string(),
-        "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.".to_string(),
+        "Disable Data Execution Prevention",
+        "Disables Data Execution Prevention (DEP) by setting the `nx` boot configuration option to `AlwaysOff`. This may improve compatibility with older applications but can introduce security risks.",
         TweakCategory::Security,
         PowershellTweak {
             id: TweakId::DisableDataExecutionPrevention,
@@ -433,23 +422,22 @@ pub fn disable_data_execution_prevention() -> Tweak {
                     "Disabled"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
-            apply_script: "bcdedit.exe /set nx AlwaysOff".to_string(),
+            apply_script: "bcdedit.exe /set nx AlwaysOff",
             undo_script: Some(
-                "bcdedit.exe /set nx OptIn".to_string(),
+                "bcdedit.exe /set nx OptIn",
             ),
-            target_state: Some("Enabled".to_string()),
+            target_state: Some("Enabled"),
         },
         true,
     )
 }
 
-pub fn disable_superfetch() -> Tweak {
+pub fn disable_superfetch<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
-        "Disable Superfetch".to_string(),
-        "Disables the Superfetch service, which preloads frequently used applications into memory to improve performance. This tweak can reduce disk I/O and memory usage but may impact performance in some scenarios.".to_string(),
+        "Disable Superfetch",
+        "Disables the Superfetch service, which preloads frequently used applications into memory to improve performance. This tweak can reduce disk I/O and memory usage but may impact performance in some scenarios.",
         TweakCategory::Memory,
         PowershellTweak {
             id: TweakId::DisableSuperfetch,
@@ -463,48 +451,49 @@ pub fn disable_superfetch() -> Tweak {
                     "Enabled"
                 }
                 "#
-                .trim()
-                .to_string(),
+                .trim(),
             ),
-            apply_script: r#"Stop-Service -Force -Name "SysMain"; Set-Service -Name "SysMain" -StartupType Disabled"#.to_string(),
+            apply_script: r#"Stop-Service -Force -Name "SysMain"; Set-Service -Name "SysMain" -StartupType Disabled"#,
             undo_script: Some(
-                r#"Set-Service -Name "SysMain" -StartupType Automatic -Status Running"#.to_string(),
+                r#"Set-Service -Name "SysMain" -StartupType Automatic -Status Running"#,
             ),
-            target_state: Some("Enabled".to_string()),
+            target_state: Some("Enabled"),
         },
         true, // requires reboot
     )
 }
 
 /// Function to create the `Low Resolution Mode` Rust tweak.
-pub fn low_res_mode() -> Tweak {
+pub fn low_res_mode<'a>() -> Tweak<'a> {
     let method = LowResMode::default();
 
-    Tweak::rust_tweak(
-        "Low Resolution Mode".to_string(),
-        format!(
+    let formatted_description = format!(
             "Sets the display to lower resolution and refresh rate to reduce GPU load and improve performance -> {}x{} @{}hz.",
             method.target_state.width, method.target_state.height, method.target_state.refresh_rate
-        ),
+        );
+    let description: &'a str = Box::leak(formatted_description.into_boxed_str());
+
+    Tweak::rust_tweak(
+        "Low Resolution Mode",
+        description,
         TweakCategory::Graphics,
         method,
-        TweakWidget::Toggle,
+        &TweakWidget::Toggle,
         false,
     )
 }
 
-pub fn enable_large_system_cache() -> Tweak {
+pub fn enable_large_system_cache<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Large System Cache".to_string(),
-        "Optimizes system memory management by adjusting the LargeSystemCache setting."
-            .to_string(),
+        "Large System Cache",
+        "Optimizes system memory management by adjusting the LargeSystemCache setting.",
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::LargeSystemCache,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-                    key: "LargeSystemCache".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management",
+                    key: "LargeSystemCache",
                     // Windows will act as a server, optimizing for file sharing and network operations, potentially improving RAM disk performance.
                     target_value: RegistryKeyValue::Dword(1),
                     // Windows will favor foreground applications in terms of memory allocation.
@@ -516,18 +505,17 @@ pub fn enable_large_system_cache() -> Tweak {
     )
 }
 
-pub fn system_responsiveness() -> Tweak {
+pub fn system_responsiveness<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "System Responsiveness".to_string(),
-        "Optimizes system responsiveness by adjusting the SystemResponsiveness setting."
-            .to_string(),
+        "System Responsiveness",
+        "Optimizes system responsiveness by adjusting the SystemResponsiveness setting.",
         TweakCategory::System,
         RegistryTweak {
             id: TweakId::SystemResponsiveness,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile".to_string(),
-                    key: "SystemResponsiveness".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile",
+                    key: "SystemResponsiveness",
                     // Windows will favor foreground applications in terms of resource allocation.
                     target_value: RegistryKeyValue::Dword(0),
                     // Windows will favor background services in terms of resource allocation.
@@ -540,16 +528,16 @@ pub fn system_responsiveness() -> Tweak {
     )
 }
 
-pub fn disable_hw_acceleration() -> Tweak {
+pub fn disable_hw_acceleration<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Hardware Acceleration".to_string(),
-        "Disables hardware acceleration for the current user.".to_string(),
+        "Disable Hardware Acceleration",
+        "Disables hardware acceleration for the current user.",
         TweakCategory::Graphics,
         RegistryTweak {
             id: TweakId::DisableHWAcceleration,
             modifications: vec![RegistryModification {
-                path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics".to_string(),
-                key: "DisableHWAcceleration".to_string(),
+                path: "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Avalon.Graphics",
+                key: "DisableHWAcceleration",
                 target_value: RegistryKeyValue::Dword(1),
                 default_value: Some(RegistryKeyValue::Dword(0)),
             }],
@@ -558,18 +546,16 @@ pub fn disable_hw_acceleration() -> Tweak {
     )
 }
 
-pub fn win32_priority_separation() -> Tweak {
+pub fn win32_priority_separation<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Win32PrioritySeparation".to_string(),
-        "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting."
-            .to_string(),
+        "Win32PrioritySeparation",
+        "Optimizes system responsiveness by adjusting the Win32PrioritySeparation setting.",
         TweakCategory::System,
         RegistryTweak {
             id: TweakId::Win32PrioritySeparation,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl"
-                    .to_string(),
-                key: "Win32PrioritySeparation".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\PriorityControl",
+                key: "Win32PrioritySeparation",
                 // Foreground applications will receive priority over background services.
                 target_value: RegistryKeyValue::Dword(26),
                 // Background services will receive priority over foreground applications.
@@ -580,17 +566,17 @@ pub fn win32_priority_separation() -> Tweak {
     )
 }
 
-pub fn disable_core_parking() -> Tweak {
+pub fn disable_core_parking<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Core Parking".to_string(),
-        "Disables core parking to improve system performance.".to_string(),
+        "Disable Core Parking",
+        "Disables core parking to improve system performance.",
         TweakCategory::Power,
         RegistryTweak {
             id: TweakId::DisableCoreParking,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583".to_string(),
-                    key: "ValueMax".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\0cc5b647-c1df-4637-891a-dec35c318583",
+                    key: "ValueMax",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(64)),
                 },
@@ -600,17 +586,17 @@ pub fn disable_core_parking() -> Tweak {
     )
 }
 
-pub fn disable_low_disk_space_checks() -> Tweak {
+pub fn disable_low_disk_space_checks<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Low Disk Space Checks".to_string(),
-        "Disables low disk space checks to prevent notifications.".to_string(),
+        "Disable Low Disk Space Checks",
+        "Disables low disk space checks to prevent notifications.",
         TweakCategory::System,
         RegistryTweak {
             id: TweakId::NoLowDiskSpaceChecks,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer".to_string(),
-                    key: "NoLowDiskSpaceChecks".to_string(),
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+                    key: "NoLowDiskSpaceChecks",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: Some(RegistryKeyValue::Dword(0)),
                 },
@@ -620,17 +606,17 @@ pub fn disable_low_disk_space_checks() -> Tweak {
     )
 }
 
-pub fn disable_windows_error_reporting() -> Tweak {
+pub fn disable_windows_error_reporting<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Windows Error Reporting".to_string(),
-        "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.".to_string(),
+        "Disable Windows Error Reporting",
+        "Disables Windows Error Reporting by setting the `Disabled` registry value to `1`. This prevents the system from sending error reports to Microsoft but may hinder troubleshooting.",
         TweakCategory::Telemetry,
         RegistryTweak {
             id: TweakId::DisableWindowsErrorReporting,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting".to_string(),
-                    key: "Disabled".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting",
+                    key: "Disabled",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: Some(RegistryKeyValue::Dword(0)),
                 },
@@ -640,17 +626,16 @@ pub fn disable_windows_error_reporting() -> Tweak {
     )
 }
 
-pub fn dont_verify_random_drivers() -> Tweak {
+pub fn dont_verify_random_drivers<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Random Driver Verification".to_string(),
-        "Disables random driver verification to improve system performance.".to_string(),
+        "Disable Random Driver Verification",
+        "Disables random driver verification to improve system performance.",
         TweakCategory::System,
         RegistryTweak {
             id: TweakId::DontVerifyRandomDrivers,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem"
-                    .to_string(),
-                key: "DontVerifyRandomDrivers".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                key: "DontVerifyRandomDrivers",
                 target_value: RegistryKeyValue::Dword(1),
                 default_value: None,
             }],
@@ -659,17 +644,17 @@ pub fn dont_verify_random_drivers() -> Tweak {
     )
 }
 
-pub fn disable_driver_paging() -> Tweak {
+pub fn disable_driver_paging<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Driver Paging".to_string(),
-        " Paging executive is used to load system files such as kernel and hardware drivers to the page file when needed. Disable will force run into not virtual memory".to_string(),
+        "Disable Driver Paging",
+        " Paging executive is used to load system files such as kernel and hardware drivers to the page file when needed. Disable will force run into not virtual memory",
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::DisableDriverPaging,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Session Manager\\Memory Management".to_string(),
-                    key: "DisablePagingExecutive".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Control\\Session Manager\\Memory Management",
+                    key: "DisablePagingExecutive",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
@@ -679,17 +664,17 @@ pub fn disable_driver_paging() -> Tweak {
     )
 }
 
-pub fn disable_prefetcher() -> Tweak {
+pub fn disable_prefetcher<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Prefetcher Service".to_string(),
-        "Disables the Prefetcher service by setting the `EnablePrefetcher` registry value to `0`. This may reduce system boot time and improve performance, especially on systems with SSDs.".to_string(),
+        "Disable Prefetcher Service",
+        "Disables the Prefetcher service by setting the `EnablePrefetcher` registry value to `0`. This may reduce system boot time and improve performance, especially on systems with SSDs.",
         TweakCategory::Services,
         RegistryTweak {
             id: TweakId::DisablePrefetcher,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters".to_string(),
-                    key: "EnablePrefetcher".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters",
+                    key: "EnablePrefetcher",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(3)),
                 },
@@ -699,17 +684,17 @@ pub fn disable_prefetcher() -> Tweak {
     )
 }
 
-pub fn disable_application_telemetry() -> Tweak {
+pub fn disable_application_telemetry<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Application Telemetry".to_string(),
-        "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.".to_string(),
+        "Disable Application Telemetry",
+        "Disables Windows Application Telemetry by setting the `AITEnable` registry value to `0`. This reduces the collection of application telemetry data but may limit certain features or diagnostics.",
         TweakCategory::Telemetry,
         RegistryTweak {
             id: TweakId::DisableApplicationTelemetry,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat".to_string(),
-                    key: "AITEnable".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat",
+                    key: "AITEnable",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
@@ -719,17 +704,17 @@ pub fn disable_application_telemetry() -> Tweak {
     )
 }
 
-pub fn thread_dpc_disable() -> Tweak {
+pub fn thread_dpc_disable<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Thread DPC Disable".to_string(),
-        "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.".to_string(),
+        "Thread DPC Disable",
+        "Disables or modifies the handling of Deferred Procedure Calls (DPCs) related to threads by setting the 'ThreadDpcEnable' registry value to 0. This aims to reduce DPC overhead and potentially enhance system responsiveness. However, it may lead to system instability or compatibility issues with certain hardware or drivers.",
         TweakCategory::Kernel,
         RegistryTweak {
             id: TweakId::ThreadDpcDisable,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "ThreadDpcEnable".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "ThreadDpcEnable",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
@@ -739,16 +724,16 @@ pub fn thread_dpc_disable() -> Tweak {
     )
 }
 
-pub fn svc_host_split_threshold() -> Tweak {
+pub fn svc_host_split_threshold<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable SvcHost Split".to_string(),
-        "Adjusts the SvcHost Split Threshold in KB to optimize system performance.".to_string(),
+        "Disable SvcHost Split",
+        "Adjusts the SvcHost Split Threshold in KB to optimize system performance.",
         TweakCategory::System,
         RegistryTweak {
             id: TweakId::SvcHostSplitThreshold,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control".to_string(),
-                key: "SvcHostSplitThresholdInKB".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control",
+                key: "SvcHostSplitThresholdInKB",
                 target_value: RegistryKeyValue::Dword(0x0f000000),
                 default_value: None,
             }],
@@ -757,17 +742,17 @@ pub fn svc_host_split_threshold() -> Tweak {
     )
 }
 
-pub fn disable_windows_defender() -> Tweak {
+pub fn disable_windows_defender<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Windows Defender".to_string(),
-        "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.".to_string(),
+        "Disable Windows Defender",
+        "Disables Windows Defender by setting the `DisableAntiSpyware` registry value to `1`. This prevents Windows Defender from running and may leave your system vulnerable to malware.",
         TweakCategory::Security,
         RegistryTweak {
             id: TweakId::DisableWindowsDefender,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender".to_string(),
-                    key: "DisableAntiSpyware".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender",
+                    key: "DisableAntiSpyware",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
@@ -777,17 +762,16 @@ pub fn disable_windows_defender() -> Tweak {
     )
 }
 
-pub fn disable_page_file_encryption() -> Tweak {
+pub fn disable_page_file_encryption<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Page File Encryption".to_string(),
-        "Disables page file encryption to improve system performance.".to_string(),
+        "Disable Page File Encryption",
+        "Disables page file encryption to improve system performance.",
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::DisablePageFileEncryption,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem"
-                    .to_string(),
-                key: "NtfsEncryptPagingFile".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+                key: "NtfsEncryptPagingFile",
                 target_value: RegistryKeyValue::Dword(0),
                 default_value: Some(RegistryKeyValue::Dword(1)),
             }],
@@ -796,17 +780,17 @@ pub fn disable_page_file_encryption() -> Tweak {
     )
 }
 
-pub fn disable_intel_tsx() -> Tweak {
+pub fn disable_intel_tsx<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Intel TSX".to_string(),
-        "Disables Intel Transactional Synchronization Extensions (TSX) operations to mitigate potential security vulnerabilities.".to_string(),
+        "Disable Intel TSX",
+        "Disables Intel Transactional Synchronization Extensions (TSX) operations to mitigate potential security vulnerabilities.",
         TweakCategory::Security,
         RegistryTweak {
             id: TweakId::DisableIntelTSX,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Kernel".to_string(),
-                    key: "DisableTsx".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Kernel",
+                    key: "DisableTsx",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
@@ -816,17 +800,17 @@ pub fn disable_intel_tsx() -> Tweak {
     )
 }
 
-pub fn disable_windows_maintenance() -> Tweak {
+pub fn disable_windows_maintenance<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Windows Maintenance".to_string(),
-        "Disables Windows Maintenance by setting the `MaintenanceDisabled` registry value to `1`. This prevents Windows from performing maintenance tasks, such as software updates, system diagnostics, and security scans.".to_string(),
+        "Disable Windows Maintenance",
+        "Disables Windows Maintenance by setting the `MaintenanceDisabled` registry value to `1`. This prevents Windows from performing maintenance tasks, such as software updates, system diagnostics, and security scans.",
         TweakCategory::Action,
         RegistryTweak {
             id: TweakId::DisableWindowsMaintenance,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance".to_string(),
-                    key: "MaintenanceDisabled".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance",
+                    key: "MaintenanceDisabled",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
@@ -836,23 +820,23 @@ pub fn disable_windows_maintenance() -> Tweak {
     )
 }
 
-pub fn additional_kernel_worker_threads() -> Tweak {
+pub fn additional_kernel_worker_threads<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Additional Worker Threads".to_string(),
-        "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.".to_string(),
+        "Additional Worker Threads",
+        "Increases the number of kernel worker threads by setting the AdditionalCriticalWorkerThreads and AdditionalDelayedWorkerThreads values to match the number of logical processors in the system. This tweak boosts performance in multi-threaded workloads by allowing the kernel to handle more concurrent operations, improving responsiveness and reducing bottlenecks in I/O-heavy or CPU-bound tasks. It ensures that both critical and delayed work items are processed more efficiently, particularly on systems with multiple cores.",
         TweakCategory::Kernel,
         RegistryTweak {
             id: TweakId::AdditionalKernelWorkerThreads,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive".to_string(),
-                    key: "AdditionalCriticalWorkerThreads".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive",
+                    key: "AdditionalCriticalWorkerThreads",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive".to_string(),
-                    key: "AdditionalDelayedWorkerThreads".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Executive",
+                    key: "AdditionalDelayedWorkerThreads",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
@@ -862,25 +846,25 @@ pub fn additional_kernel_worker_threads() -> Tweak {
     )
 }
 
-pub fn disable_speculative_execution_mitigations() -> Tweak {
+pub fn disable_speculative_execution_mitigations<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Speculative Execution Mitigations".to_string(),
+        "Disable Speculative Execution Mitigations",
         "
 Disables speculative execution mitigations by setting the `FeatureSettingsOverride` and `FeatureSettingsOverrideMask` registry values to `3`. This may improve performance but can also introduce security risks.
-".trim().to_string(),
+".trim(),
         TweakCategory::Security,
         RegistryTweak {
             id: TweakId::DisableSpeculativeExecutionMitigations,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-                    key: "FeatureSettingsOverride".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management",
+                    key: "FeatureSettingsOverride",
                     target_value: RegistryKeyValue::Dword(3),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-                    key: "FeatureSettingsOverrideMask".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management",
+                    key: "FeatureSettingsOverrideMask",
                     target_value: RegistryKeyValue::Dword(3),
                     default_value: None,
                 },
@@ -890,9 +874,9 @@ Disables speculative execution mitigations by setting the `FeatureSettingsOverri
     )
 }
 
-pub fn high_performance_visual_settings() -> Tweak {
+pub fn high_performance_visual_settings<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "High Performance Visual Settings".to_string(),
+        "High Performance Visual Settings",
         "
 This tweak adjusts Windows visual settings to prioritize performance over appearance:
 
@@ -906,78 +890,78 @@ This tweak adjusts Windows visual settings to prioritize performance over appear
 8. Disables font smoothing (ClearType)
 9. Turns off the shadow effect under mouse pointer
 10. Disables the shadow effect for window borders
-".trim().to_string(),
+".trim(),
         TweakCategory::Graphics,
         RegistryTweak {
             id: TweakId::HighPerformanceVisualSettings,
             modifications: vec![
                 // 1. Set VisualFXSetting to 'Adjust for best performance' (2)
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects".to_string(),
-                    key: "VisualFXSetting".to_string(),
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+                    key: "VisualFXSetting",
                     target_value: RegistryKeyValue::Dword(2),
                     default_value: Some(RegistryKeyValue::Dword(0)), // Default VisualFXSetting
                 },
                 // 2. Disable animations when minimizing/maximizing windows
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics".to_string(),
-                    key: "MinAnimate".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics",
+                    key: "MinAnimate",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
                 // 3. Turn off animated controls and elements inside windows
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
-                    key: "UserPreferencesMask".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop",
+                    key: "UserPreferencesMask",
                     target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
                     default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
                 },
                 // 4. Disable Aero Peek
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM".to_string(),
-                    key: "EnableAeroPeek".to_string(),
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM",
+                    key: "EnableAeroPeek",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
                 // 5. Turn off live thumbnails for taskbar previews
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".to_string(),
-                    key: "ExtendedUIHoverTime".to_string(),
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                    key: "ExtendedUIHoverTime",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(400)), // Default hover time
                 },
                 // 6. Disable smooth scrolling of list views
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
-                    key: "SmoothScroll".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop",
+                    key: "SmoothScroll",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
                 // 7. Turn off fading effects for menus and tooltips
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
-                    key: "UserPreferencesMask".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop",
+                    key: "UserPreferencesMask",
                     target_value: RegistryKeyValue::Binary(vec![144, 18, 3, 128, 16, 0, 0, 0]),
                     default_value: Some(RegistryKeyValue::Binary(vec![158, 30, 7, 128, 18, 0, 0, 0])),
                 },
                 // 8. Disable font smoothing (ClearType)
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop".to_string(),
-                    key: "FontSmoothing".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Desktop",
+                    key: "FontSmoothing",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(2)),
                 },
                 // 9. Turn off the shadow effect under mouse pointer
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Control Panel\\Cursors".to_string(),
-                    key: "CursorShadow".to_string(),
+                    path: "HKEY_CURRENT_USER\\Control Panel\\Cursors",
+                    key: "CursorShadow",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
                 // 10. Disable the shadow effect for window borders
                 RegistryModification {
-                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize".to_string(),
-                    key: "EnableTransparentGlass".to_string(),
+                    path: "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                    key: "EnableTransparentGlass",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: Some(RegistryKeyValue::Dword(1)),
                 },
@@ -987,95 +971,95 @@ This tweak adjusts Windows visual settings to prioritize performance over appear
     )
 }
 
-pub fn enhanced_kernel_performance() -> Tweak {
+pub fn enhanced_kernel_performance<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Enhanced Kernel Performance".to_string(),
-        "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.".to_string(),
+        "Enhanced Kernel Performance",
+        "Optimizes various kernel-level settings in the Windows Registry to improve system performance by increasing I/O queue sizes, buffer sizes, and stack sizes, while disabling certain security features. These changes aim to enhance multitasking and I/O operations but may affect system stability and security.",
         TweakCategory::Kernel,
         RegistryTweak {
             id: TweakId::EnhancedKernelPerformance,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "MaxDynamicTickDuration".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "MaxDynamicTickDuration",
                     target_value: RegistryKeyValue::Dword(10),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "MaximumSharedReadyQueueSize".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "MaximumSharedReadyQueueSize",
                     target_value: RegistryKeyValue::Dword(128),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "BufferSize".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "BufferSize",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IoQueueWorkItem".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IoQueueWorkItem",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IoQueueWorkItemToNode".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IoQueueWorkItemToNode",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IoQueueWorkItemEx".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IoQueueWorkItemEx",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IoQueueThreadIrp".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IoQueueThreadIrp",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "ExTryQueueWorkItem".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "ExTryQueueWorkItem",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "ExQueueWorkItem".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "ExQueueWorkItem",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IoEnqueueIrp".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IoEnqueueIrp",
                     target_value: RegistryKeyValue::Dword(32),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "XMMIZeroingEnable".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "XMMIZeroingEnable",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "UseNormalStack".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "UseNormalStack",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "UseNewEaBuffering".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "UseNewEaBuffering",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "StackSubSystemStackSize".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "StackSubSystemStackSize",
                     target_value: RegistryKeyValue::Dword(65536),
                     default_value: None,
                 },
@@ -1085,17 +1069,17 @@ pub fn enhanced_kernel_performance() -> Tweak {
     )
 }
 
-pub fn split_large_caches() -> Tweak {
+pub fn split_large_caches<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Split Large Caches".to_string(),
-        "This registry key is used to enable the splitting of large caches in the Windows operating system. This setting can help improve system performance by optimizing how the kernel handles large cache sizes, particularly in systems with significant memory resources.".to_string(),
+        "Split Large Caches",
+        "This registry key is used to enable the splitting of large caches in the Windows operating system. This setting can help improve system performance by optimizing how the kernel handles large cache sizes, particularly in systems with significant memory resources.",
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::SplitLargeCaches,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "SplitLargeCaches".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "SplitLargeCaches",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: Some(RegistryKeyValue::Dword(0)),
                 },
@@ -1105,63 +1089,61 @@ pub fn split_large_caches() -> Tweak {
     )
 }
 
-pub fn se_lock_memory_privilege() -> Tweak {
+pub fn se_lock_memory_privilege<'a>() -> Tweak<'a> {
     Tweak::group_policy_tweak(
-        "SeLockMemoryPrivilege".to_string(),
-        "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.".to_string(),
+        "SeLockMemoryPrivilege",
+        "The SeLockMemoryPrivilege group policy setting allows a process to lock pages in physical memory, preventing them from being paged out to disk. This can improve performance for applications that require fast, consistent access to critical data by keeping it always available in RAM.",
         TweakCategory::Memory,
         GroupPolicyTweak {
             id: TweakId::SeLockMemoryPrivilege,
-            key: "SeLockMemoryPrivilege".to_string(),
+            key: "SeLockMemoryPrivilege",
             value: GroupPolicyValue::Enabled,
         },
         true,
     )
 }
 
-pub fn disable_protected_services() -> Tweak {
+pub fn disable_protected_services<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Protected Services".to_string(),
-        "Disables multiple services which can only be stopped by modifying the registry. These will not break your system, but will stop networking functionality.".to_string(),
+        "Disable Protected Services",
+        "Disables multiple services which can only be stopped by modifying the registry. These will not break your system, but will stop networking functionality.",
         TweakCategory::Services,
         RegistryTweak {
             id: TweakId::DisableProtectedServices,
             modifications: vec![
                 RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\DoSvc".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\DoSvc",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(3)),
             },
             RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Dhcp".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Dhcp",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             },
             RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\NcbService"
-                    .to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\NcbService",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             },
             RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\netprofm"
-                    .to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\netprofm",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             },
             RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\nsi".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\nsi",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             },
             RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\RmSvc".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\RmSvc",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             }
@@ -1171,17 +1153,16 @@ pub fn disable_protected_services() -> Tweak {
     )
 }
 
-pub fn disable_security_accounts_manager() -> Tweak {
+pub fn disable_security_accounts_manager<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Security Accounts Manager".to_string(),
-        "Disables the Security Accounts Manager service by setting the Start registry DWORD to 4."
-            .to_string(),
+        "Disable Security Accounts Manager",
+        "Disables the Security Accounts Manager service by setting the Start registry DWORD to 4.",
         TweakCategory::Services,
         RegistryTweak {
             id: TweakId::DisableSecurityAccountsManager,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\SamSs".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\SamSs",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(4),
                 default_value: Some(RegistryKeyValue::Dword(2)),
             }],
@@ -1190,16 +1171,16 @@ pub fn disable_security_accounts_manager() -> Tweak {
     )
 }
 
-pub fn disable_paging_combining() -> Tweak {
+pub fn disable_paging_combining<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Disable Paging Combining".to_string(),
-        "Disables Windows attempt to save as much RAM as possible, such as sharing pages for images, copy-on-write for data pages, and compression.".to_string(),
+        "Disable Paging Combining",
+        "Disables Windows attempt to save as much RAM as possible, such as sharing pages for images, copy-on-write for data pages, and compression.",
         TweakCategory::Memory,
         RegistryTweak {
             id: TweakId::DisablePagingCombining,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management".to_string(),
-                key: "DisablePagingCombining".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management",
+                key: "DisablePagingCombining",
                 target_value: RegistryKeyValue::Dword(1),
                 default_value: None,
             }],
@@ -1208,47 +1189,47 @@ pub fn disable_paging_combining() -> Tweak {
     )
 }
 
-pub fn aggressive_dpc_handling() -> Tweak {
+pub fn aggressive_dpc_handling<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Aggressive DPC Handling".to_string(),
-        "This tweak modifies kernel-level settings in the Windows Registry to aggressively optimize the handling of Deferred Procedure Calls (DPCs) by disabling timeouts, watchdogs, and minimizing queue depth, aiming to enhance system responsiveness and reduce latency. However, it also removes safeguards that monitor and control long-running DPCs, which could lead to system instability or crashes in certain scenarios, particularly during high-performance or overclocking operations.".to_string(),
+        "Aggressive DPC Handling",
+        "This tweak modifies kernel-level settings in the Windows Registry to aggressively optimize the handling of Deferred Procedure Calls (DPCs) by disabling timeouts, watchdogs, and minimizing queue depth, aiming to enhance system responsiveness and reduce latency. However, it also removes safeguards that monitor and control long-running DPCs, which could lead to system instability or crashes in certain scenarios, particularly during high-performance or overclocking operations.",
         TweakCategory::Kernel,
         RegistryTweak {
             id: TweakId::AggressiveDpcHandling,
             modifications: vec![
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "DpcWatchdogProfileOffset".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "DpcWatchdogProfileOffset",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "DpcTimeout".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "DpcTimeout",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "IdealDpcRate".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "IdealDpcRate",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "MaximumDpcQueueDepth".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "MaximumDpcQueueDepth",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "MinimumDpcRate".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "MinimumDpcRate",
                     target_value: RegistryKeyValue::Dword(1),
                     default_value: None,
                 },
                 RegistryModification {
-                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel".to_string(),
-                    key: "DpcWatchdogPeriod".to_string(),
+                    path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\kernel",
+                    key: "DpcWatchdogPeriod",
                     target_value: RegistryKeyValue::Dword(0),
                     default_value: None,
                 },
@@ -1258,45 +1239,43 @@ pub fn aggressive_dpc_handling() -> Tweak {
     )
 }
 
-pub fn ultimate_performance_plan() -> Tweak {
+pub fn ultimate_performance_plan<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Enable Ultimate Performance Plan".to_string(),
-        "Activates the Ultimate Performance power plan, which is tailored for demanding workloads by minimizing micro-latencies and boosting hardware performance. It disables power-saving features like core parking, hard disk sleep, and processor throttling, ensuring CPU cores run at maximum frequency. This plan also keeps I/O devices and PCIe links at full power, prioritizing performance over energy efficiency. It's designed to reduce the delays introduced by energy-saving policies, improving responsiveness in tasks that require consistent, high-throughput system resources.".to_string(),
+        "Enable Ultimate Performance Plan",
+        "Activates the Ultimate Performance power plan, which is tailored for demanding workloads by minimizing micro-latencies and boosting hardware performance. It disables power-saving features like core parking, hard disk sleep, and processor throttling, ensuring CPU cores run at maximum frequency. This plan also keeps I/O devices and PCIe links at full power, prioritizing performance over energy efficiency. It's designed to reduce the delays introduced by energy-saving policies, improving responsiveness in tasks that require consistent, high-throughput system resources.",
         TweakCategory::Power,
         UltimatePerformancePlan::new(),
-        TweakWidget::Toggle,
+        &TweakWidget::Toggle,
         false, // requires reboot
     )
 }
 
-pub fn slow_mode() -> Tweak {
+pub fn slow_mode<'a>() -> Tweak<'a> {
     Tweak::rust_tweak(
-        "Slow Mode".to_string(),
+        "Slow Mode",
         "Places the system in a low-power state by:
 1. Switching to the Power Saver scheme
 2. Limiting max cores to 2
 3. Limiting CPU frequency
 4. Delaying CPU performance state transitions
-"
-        .to_string(),
+",
         TweakCategory::Power,
         SlowMode::new(),
-        TweakWidget::Toggle,
+        &TweakWidget::Toggle,
         false, // does not require reboot
     )
 }
 
-pub fn enable_mcsss() -> Tweak {
+pub fn enable_mcsss<'a>() -> Tweak<'a> {
     Tweak::registry_tweak(
-        "Enable Multimedia Class Scheduler Service".to_string(),
-        "Enables the Multimedia Class Scheduler Service (MMCSS) by setting the Start registry DWORD to 2."
-            .to_string(),
+        "Enable Multimedia Class Scheduler Service",
+        "Enables the Multimedia Class Scheduler Service (MMCSS) by setting the Start registry DWORD to 2.",
         TweakCategory::Services,
         RegistryTweak {
             id: TweakId::EnableMcsss,
             modifications: vec![RegistryModification {
-                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Audiosrv".to_string(),
-                key: "Start".to_string(),
+                path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Audiosrv",
+                key: "Start",
                 target_value: RegistryKeyValue::Dword(2),
                 default_value: Some(RegistryKeyValue::Dword(3)),
             }],
@@ -1305,10 +1284,10 @@ pub fn enable_mcsss() -> Tweak {
     )
 }
 
-pub fn disable_cpb() -> Tweak {
+pub fn disable_cpb<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
-        "Enable Core Performance Boost".to_string(),
-        "Enables AMD Core Performance Boost (CPB) to dynamically adjust CPU clock speeds based on workload demands, improving performance in multi-threaded applications and tasks. This feature allows AMD processors to operate at higher frequencies when needed, maximizing processing power and responsiveness.".to_string(),
+        "Enable Core Performance Boost",
+        "Enables AMD Core Performance Boost (CPB) to dynamically adjust CPU clock speeds based on workload demands, improving performance in multi-threaded applications and tasks. This feature allows AMD processors to operate at higher frequencies when needed, maximizing processing power and responsiveness.",
         TweakCategory::Power,
         MSRTweak {
             id: TweakId::DisbleCpb,
@@ -1319,10 +1298,10 @@ pub fn disable_cpb() -> Tweak {
     )
 }
 
-// pub fn speculative_store_bypass_disable() -> Tweak {
+// pub fn speculative_store_bypass_disable<'a>() -> Tweak<'a> {
 //     Tweak::msr_tweak(
-//         "Speculative Store Bypass Disable".to_string(),
-//         "Disables Speculative Store Bypass (SSBD) to mitigate potential security vulnerabilities related to speculative execution. This feature prevents the processor from speculatively executing store operations that bypass the cache, reducing the risk of unauthorized data access or side-channel attacks.".to_string(),
+//         "Speculative Store Bypass Disable",
+//         "Disables Speculative Store Bypass (SSBD) to mitigate potential security vulnerabilities related to speculative execution. This feature prevents the processor from speculatively executing store operations that bypass the cache, reducing the risk of unauthorized data access or side-channel attacks.",
 //         TweakCategory::Security,
 //         MSRTweak {
 //             id: TweakId::SpeculativeStoreBypassDisable,
@@ -1333,10 +1312,10 @@ pub fn disable_cpb() -> Tweak {
 //     )
 // }
 
-// pub fn predictive_store_forwarding_disable() -> Tweak {
+// pub fn predictive_store_forwarding_disable<'a>() -> Tweak<'a> {
 //     Tweak::msr_tweak(
-//         "Predictive Store Forwarding Disable".to_string(),
-//         "Disables Predictive Store Forwarding (PSFD) to mitigate potential security vulnerabilities related to speculative execution. This feature prevents the processor from speculatively executing store operations that bypass the cache, reducing the risk of unauthorized data access or side-channel attacks.".to_string(),
+//         "Predictive Store Forwarding Disable",
+//         "Disables Predictive Store Forwarding (PSFD) to mitigate potential security vulnerabilities related to speculative execution. This feature prevents the processor from speculatively executing store operations that bypass the cache, reducing the risk of unauthorized data access or side-channel attacks.",
 //         TweakCategory::Security,
 //         MSRTweak {
 //             id: TweakId::PredictiveStoreForwardingDisable,

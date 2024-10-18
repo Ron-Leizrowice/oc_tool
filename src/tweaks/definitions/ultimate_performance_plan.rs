@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn test_initial_state() {
         let tweak = UltimatePerformancePlan::new();
-        assert_eq!(tweak.initial_state().unwrap(), false);
+        assert!(!tweak.initial_state().unwrap());
     }
 
     #[test]
@@ -108,6 +108,6 @@ mod tests {
         let tweak = UltimatePerformancePlan::new();
         tweak.apply().unwrap();
         tweak.revert().unwrap();
-        assert_eq!(tweak.initial_state().unwrap(), false);
+        assert!(!tweak.initial_state().unwrap());
     }
 }

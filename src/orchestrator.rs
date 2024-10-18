@@ -2,16 +2,17 @@
 
 use std::{sync::Arc, thread};
 
+use anyhow::Error;
 use crossbeam::channel;
 
 use crate::tweaks::{definitions::TweakId, TweakMethod};
 
 /// Represents the result of a processed task.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TweakResult {
     pub id: TweakId,
     pub success: bool,
-    pub error: Option<String>,
+    pub error: Option<Error>,
     pub enabled_state: Option<bool>, // Some(true) if enabled, Some(false) if disabled, None if unknown
     pub action: TweakAction,
 }
@@ -55,7 +56,7 @@ impl TaskOrchestrator {
     }
 
     /// Submits a new task to be processed.
-    pub fn submit_task(&self, task: TweakTask) -> Result<(), String> {
+    pub fn submit_task(&self, task: TweakTask) -> anyhow::Result<()> {
         let result_sender = self.result_sender.clone();
         thread::spawn(move || {
             let result = match task.action {
@@ -70,7 +71,7 @@ impl TaskOrchestrator {
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
-                        error: Some(e.to_string()),
+                        error: Some(e),
                         enabled_state: None,
                         action: TweakAction::Apply,
                     },
@@ -86,7 +87,7 @@ impl TaskOrchestrator {
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
-                        error: Some(e.to_string()),
+                        error: Some(e),
                         enabled_state: None,
                         action: TweakAction::Revert,
                     },
@@ -102,7 +103,7 @@ impl TaskOrchestrator {
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
-                        error: Some(e.to_string()),
+                        error: Some(e),
                         enabled_state: None,
                         action: TweakAction::ReadInitialState,
                     },

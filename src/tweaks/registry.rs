@@ -13,21 +13,21 @@ use crate::tweaks::TweakMethod;
 /// Defines a set of modifications to the Windows registry, which in combination
 /// make up a single tweak.
 #[derive(Debug)]
-pub struct RegistryTweak {
+pub struct RegistryTweak<'a> {
     /// Unique ID for the tweak
     pub id: TweakId,
-    pub(crate) modifications: Vec<RegistryModification>,
+    pub(crate) modifications: Vec<RegistryModification<'a>>,
 }
 
 /// Represents a single registry modification, including the registry key, value name, desired value, and default value.
 /// If `default_value` is `None`, the modification is considered enabled if the registry value exists.
 /// Reverting such a tweak involves deleting the registry value.
 #[derive(Debug, Clone)]
-pub struct RegistryModification {
+pub struct RegistryModification<'a> {
     /// Full path of the registry key (e.g., "HKEY_LOCAL_MACHINE\\Software\\...").
-    pub path: String,
+    pub path: &'a str,
     /// Name of the registry value to modify.
-    pub key: String,
+    pub key: &'a str,
     /// The value to set when applying the tweak.
     pub target_value: RegistryKeyValue,
     /// The default value to revert to when undoing the tweak.
@@ -42,7 +42,7 @@ pub enum RegistryKeyValue {
     Binary(Vec<u8>),
 }
 
-impl RegistryTweak {
+impl RegistryTweak<'_> {
     /// Parses the full registry path into hive and subkey path.
     ///
     /// # Parameters
@@ -253,7 +253,7 @@ impl RegistryTweak {
         self.modifications
             .iter()
             .map(|modification| {
-                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                let (hive, subkey_path) = Self::parse_registry_path(modification.path)
                     .with_context(|| {
                         format!("Failed to parse registry path '{}'", modification.path)
                     })?;
@@ -261,7 +261,7 @@ impl RegistryTweak {
                     .open_subkey(hive, subkey_path, KEY_READ)
                     .with_context(|| format!("Failed to open subkey '{}'", modification.path))?;
                 let value = self
-                    .get_value(&subkey, &modification.key)
+                    .get_value(&subkey, modification.key)
                     .with_context(|| {
                         format!(
                             "Failed to read value '{}' from '{}'",
@@ -302,7 +302,7 @@ impl RegistryTweak {
         );
         for (modification, original_value) in modifications.iter().rev() {
             let (hive, subkey_path) =
-                Self::parse_registry_path(&modification.path).with_context(|| {
+                Self::parse_registry_path(modification.path).with_context(|| {
                     format!("Failed to parse registry path '{}'", modification.path)
                 })?;
             let subkey = match self.open_subkey(hive, subkey_path, KEY_WRITE) {
@@ -319,7 +319,7 @@ impl RegistryTweak {
 
             match original_value {
                 Some(val) => {
-                    self.set_value(&subkey, &modification.key, val)
+                    self.set_value(&subkey, modification.key, val)
                         .with_context(|| {
                             format!(
                                 "Failed to restore value '{}' in '{}'",
@@ -331,7 +331,7 @@ impl RegistryTweak {
                         self.id, modification.key, val, modification.path
                     );
                 }
-                None => match self.delete_value(&subkey, &modification.key) {
+                None => match self.delete_value(&subkey, modification.key) {
                     Ok(_) => {
                         info!(
                             "{:?} -> Deleted value '{}' in '{}'.",
@@ -370,7 +370,7 @@ impl RegistryTweak {
     }
 }
 
-impl TweakMethod for RegistryTweak {
+impl TweakMethod for RegistryTweak<'_> {
     /// Checks if the tweak is currently enabled.
     ///
     /// - If `default_value` is `Some`, compare `current_value` with `target_value`.
@@ -386,7 +386,7 @@ impl TweakMethod for RegistryTweak {
 
         for modification in &self.modifications {
             let (hive, subkey_path) =
-                Self::parse_registry_path(&modification.path).with_context(|| {
+                Self::parse_registry_path(modification.path).with_context(|| {
                     format!("Failed to parse registry path '{}'", modification.path)
                 })?;
 
@@ -416,7 +416,7 @@ impl TweakMethod for RegistryTweak {
 
             if modification.default_value.is_some() {
                 // For modifications with a default value, compare the current value with the target value
-                match self.get_value(&subkey, &modification.key)? {
+                match self.get_value(&subkey, modification.key)? {
                     Some(current_val) if current_val == modification.target_value => {
                         info!(
                             "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
@@ -440,7 +440,7 @@ impl TweakMethod for RegistryTweak {
                 }
             } else {
                 // For modifications without a default value, check if the registry value exists
-                let exists = self.get_value(&subkey, &modification.key)?.is_some();
+                let exists = self.get_value(&subkey, modification.key)?.is_some();
                 if exists {
                     info!(
                         "{:?} -> Modification '{}' is enabled. Value exists.",
@@ -474,7 +474,7 @@ impl TweakMethod for RegistryTweak {
         let result: Result<(), anyhow::Error> = (|| -> Result<(), anyhow::Error> {
             for modification in &self.modifications {
                 // Extract the hive and subkey path from the registry path
-                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                let (hive, subkey_path) = Self::parse_registry_path(modification.path)
                     .with_context(|| {
                         format!("Failed to parse registry path '{}'", modification.path)
                     })?;
@@ -494,7 +494,7 @@ impl TweakMethod for RegistryTweak {
 
                 // Read and store the original value
                 let original_value = self
-                    .get_value(&subkey_read, &modification.key)
+                    .get_value(&subkey_read, modification.key)
                     .with_context(|| {
                         format!(
                             "Failed to read original value '{}' from '{}'",
@@ -522,7 +522,7 @@ impl TweakMethod for RegistryTweak {
                 };
 
                 // Apply the tweak value
-                self.set_value(&subkey_write, &modification.key, &modification.target_value)
+                self.set_value(&subkey_write, modification.key, &modification.target_value)
                     .with_context(|| {
                         format!(
                             "Failed to set value '{}' in '{}'",
@@ -587,7 +587,7 @@ impl TweakMethod for RegistryTweak {
         let result: Result<(), anyhow::Error> = (|| -> Result<(), anyhow::Error> {
             for modification in &self.modifications {
                 // Extract the hive and subkey path from the registry path
-                let (hive, subkey_path) = Self::parse_registry_path(&modification.path)
+                let (hive, subkey_path) = Self::parse_registry_path(modification.path)
                     .with_context(|| {
                         format!("Failed to parse registry path '{}'", modification.path)
                     })?;
@@ -607,7 +607,7 @@ impl TweakMethod for RegistryTweak {
 
                 // Read and store the current value before reverting
                 let current_value = self
-                    .get_value(&subkey_read, &modification.key)
+                    .get_value(&subkey_read, modification.key)
                     .with_context(|| {
                         format!(
                             "Failed to read current value '{}' from '{}'",
@@ -638,7 +638,7 @@ impl TweakMethod for RegistryTweak {
                 match &modification.default_value {
                     Some(default_val) => {
                         // Restore the default value
-                        self.set_value(&subkey_write, &modification.key, default_val)
+                        self.set_value(&subkey_write, modification.key, default_val)
                             .with_context(|| {
                                 format!(
                                     "Failed to restore default value '{}' in '{}'",
@@ -650,7 +650,7 @@ impl TweakMethod for RegistryTweak {
                             self.id, modification.key, default_val, modification.path
                         );
                     }
-                    None => match self.delete_value(&subkey_write, &modification.key) {
+                    None => match self.delete_value(&subkey_write, modification.key) {
                         Ok(_) => {
                             info!(
                                 "{:?} -> Deleted value '{}' in '{}'.",
