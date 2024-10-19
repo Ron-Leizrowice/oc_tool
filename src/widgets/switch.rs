@@ -1,6 +1,9 @@
 // src/widgets/switch.rs
 
 use eframe::egui::{lerp, pos2, vec2, Response, Sense, Ui};
+use egui::Vec2;
+
+const TOGGLE_DIMENSIONS: Vec2 = vec2(2.0, 1.0);
 
 pub struct ToggleSwitch<'a> {
     state: &'a mut bool,
@@ -15,7 +18,7 @@ impl<'a> ToggleSwitch<'a> {
 impl eframe::egui::Widget for ToggleSwitch<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         // Create the ToggleSwitch widget.
-        let desired_size = ui.spacing().interact_size.y * vec2(2.0, 1.0);
+        let desired_size = ui.spacing().interact_size.y * TOGGLE_DIMENSIONS;
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
 
         // Handle click events.

@@ -17,8 +17,10 @@ use windows::{
     },
 };
 
-use super::{definitions::TweakId, TweakMethod};
-use crate::utils::get_current_username;
+use crate::{
+    tweaks::{TweakId, TweakMethod},
+    utils::windows::get_current_username,
+};
 
 /// Group Policy related constants.
 pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;

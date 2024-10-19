@@ -1,4 +1,4 @@
-// src/utils.rs
+// src/utils/windows.rs
 
 use anyhow::Result as AnyResult;
 use windows::{
@@ -13,7 +13,7 @@ use windows::{
     },
 };
 
-use crate::tweaks::powershell::execute_powershell_script;
+use super::powershell::execute_powershell_script;
 
 /// Checks if the current process is running with elevated (administrator) privileges.
 ///

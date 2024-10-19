@@ -1,20 +1,124 @@
 // src/tweaks/mod.rs
 
-pub mod definitions;
 pub mod group_policy;
 pub mod msr;
 pub mod powershell;
 pub mod registry;
+pub mod winapi;
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Error;
-use group_policy::GroupPolicyTweak;
-use msr::MSRTweak;
-use powershell::PowershellTweak;
-use registry::RegistryTweak;
+use group_policy::{all_group_policy_tweaks, method::GroupPolicyTweak};
+use msr::{all_msr_tweaks, method::MSRTweak};
+use powershell::{all_powershell_tweaks, method::PowershellTweak};
+use registry::{all_registry_tweaks, method::RegistryTweak};
+use winapi::all_winapi_tweaks;
 
 use crate::widgets::TweakWidget;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum TweakId {
+    LargeSystemCache,
+    SystemResponsiveness,
+    DisableHWAcceleration,
+    Win32PrioritySeparation,
+    DisableCoreParking,
+    ProcessIdleTasks,
+    SeLockMemoryPrivilege,
+    UltimatePerformancePlan,
+    NoLowDiskSpaceChecks,
+    AdditionalKernelWorkerThreads,
+    DisableHPET,
+    AggressiveDpcHandling,
+    EnhancedKernelPerformance,
+    DisableRamCompression,
+    DisableApplicationTelemetry,
+    DisableWindowsErrorReporting,
+    DisableLocalFirewall,
+    DontVerifyRandomDrivers,
+    DisableDriverPaging,
+    DisablePrefetcher,
+    DisableSuccessAuditing,
+    ThreadDpcDisable,
+    SvcHostSplitThreshold,
+    DisablePagefile,
+    DisableSpeculativeExecutionMitigations,
+    DisableDataExecutionPrevention,
+    DisableWindowsDefender,
+    DisablePageFileEncryption,
+    DisableProcessIdleStates,
+    KillAllNonCriticalServices,
+    DisableIntelTSX,
+    DisableWindowsMaintenance,
+    KillExplorer,
+    HighPerformanceVisualSettings,
+    LowResMode,
+    SplitLargeCaches,
+    DisableProtectedServices,
+    DisableSecurityAccountsManager,
+    DisablePagingCombining,
+    DisableSuperfetch,
+    SlowMode,
+    EnableMcsss,
+    DisablePredictiveStoreForwarding,
+    DisableSpeculativeStoreBypass,
+    DisableSingleThreadIndirectBranchPredictor,
+    DisableIndirectBranchRestrictionSpeculation,
+    SelectiveBranchPredictorBarrier,
+    IndirectBranchPredictionBarrier,
+    AutomaticIbrsEnable,
+    UpperAddressIgnoreEnable,
+    TranslationCacheExtensionEnable,
+    FastFxsaveFrstorEnable,
+    DisableSecureVirtualMachine,
+    DisableNoExecutePage,
+    DowngradeFp512ToFp256,
+    DisableRsmSpecialBusCycle,
+    DisableSmiSpecialBusCycle,
+    LongModeEnable,
+    SystemCallExtensionEnable,
+    AggressivePrefetchProfile,
+    DisableUpDownPrefetcher,
+    DisableL2StreamPrefetcher,
+    DisableL1RegionPrefetcher,
+    DisableL1StreamPrefetcher,
+    DisableL1StridePrefetcher,
+    DisableHostMultiKeyEncryption,
+    DisableSecureNestedPaging,
+    EnableTopOfMemory2MemoryTypeWriteBack,
+    DisableSecureMemoryEncryption,
+    EnableMtrrFixedDramAttributes,
+    EnableMtrrFixedDramModification,
+    EnableMtrrTopOfMemory2,
+    EnableMtrrVariableDram,
+}
+
+pub fn all_tweaks<'a>() -> BTreeMap<TweakId, Tweak<'a>> {
+    let mut tweaks = BTreeMap::new();
+
+    for (id, tweak) in all_registry_tweaks() {
+        tweaks.insert(id, tweak);
+    }
+
+    for (id, tweak) in all_winapi_tweaks() {
+        tweaks.insert(id, tweak);
+    }
+
+    for (id, tweak) in all_powershell_tweaks() {
+        tweaks.insert(id, tweak);
+    }
+
+    for (id, tweak) in all_group_policy_tweaks() {
+        tweaks.insert(id, tweak);
+    }
+
+    for (id, tweak) in all_msr_tweaks() {
+        tweaks.insert(id, tweak);
+    }
+
+    tweaks
+}
 
 /// Represents a single tweak that can be applied to the system.
 pub struct Tweak<'a> {
@@ -61,6 +165,7 @@ pub enum TweakStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TweakCategory {
     Action,
+    Cpu,
     System,
     Power,
     Kernel,
@@ -76,7 +181,7 @@ impl TweakCategory {
         vec![Self::System, Self::Kernel, Self::Memory, Self::Graphics]
     }
 
-    pub fn right() -> Vec<Self> {
+    pub fn middle() -> Vec<Self> {
         vec![
             Self::Power,
             Self::Security,
@@ -84,6 +189,10 @@ impl TweakCategory {
             Self::Action,
             Self::Services,
         ]
+    }
+
+    pub fn right() -> Vec<Self> {
+        vec![Self::Cpu]
     }
 }
 
@@ -153,7 +262,7 @@ impl<'a> Tweak<'a> {
         }
     }
 
-    pub fn rust_tweak<M: TweakMethod + 'static>(
+    pub fn winapi<M: TweakMethod + 'static>(
         name: &'a str,
         description: &'a str,
         category: TweakCategory,

@@ -5,7 +5,7 @@ use std::{sync::Arc, thread};
 use anyhow::Error;
 use crossbeam::channel;
 
-use crate::tweaks::{definitions::TweakId, TweakMethod};
+use crate::tweaks::{TweakId, TweakMethod};
 
 /// Represents the result of a processed task.
 #[derive(Debug)]

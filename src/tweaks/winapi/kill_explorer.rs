@@ -25,12 +25,20 @@ use winreg::{
     RegKey,
 };
 
-use super::TweakId;
-use crate::tweaks::TweakMethod;
+use crate::tweaks::{TweakId, TweakMethod};
 
 /// Struct implementing the TweakMethod trait for killing Explorer.
 pub struct KillExplorerTweak {
     pub id: TweakId,
+}
+
+impl KillExplorerTweak {
+    /// Creates a new instance of the KillExplorerTweak struct.
+    pub fn new() -> Self {
+        Self {
+            id: TweakId::KillExplorer,
+        }
+    }
 }
 
 impl TweakMethod for KillExplorerTweak {

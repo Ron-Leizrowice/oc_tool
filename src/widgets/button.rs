@@ -1,6 +1,9 @@
 // src/widgets/button.rs
 
 use eframe::egui::{FontId, Response, Rounding, Sense, Ui};
+use egui::{vec2, Vec2};
+
+pub const BUTTON_DIMENSIONS: Vec2 = vec2(35.0, 20.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonState {
@@ -37,7 +40,7 @@ impl eframe::egui::Widget for ActionButton<'_> {
         };
 
         // Allocate space for the button
-        let (rect, mut response) = ui.allocate_exact_size([35.0, 20.0].into(), sense);
+        let (rect, mut response) = ui.allocate_exact_size(BUTTON_DIMENSIONS, sense);
 
         // Handle button clicks
         if is_clickable && response.clicked() {

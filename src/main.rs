@@ -1,5 +1,6 @@
-// // src/main.rs
+// src/main.rs
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use egui_dialogs::{DialogDetails, Dialogs, StandardDialog, StandardReply};
 
 mod orchestrator;
 mod power;
@@ -10,24 +11,23 @@ mod widgets;
 use std::collections::BTreeMap;
 
 use eframe::{egui, App, Frame, NativeOptions};
-use egui::{vec2, Button, FontId, RichText, Sense, UiBuilder, Vec2};
+use egui::{vec2, Button, FontId, RichText, Sense, UiBuilder};
 use orchestrator::{TaskOrchestrator, TweakAction, TweakTask};
 use tracing::Level;
 use tracing_subscriber::{self};
-use tweaks::{
-    definitions::TweakId,
-    msr::{setup_winring0_service, verify_winring0_setup},
-    Tweak, TweakCategory, TweakStatus,
+use tweaks::{Tweak, TweakCategory, TweakId, TweakStatus};
+use utils::{
+    windows::{is_elevated, reboot_into_bios, reboot_system},
+    winring0::{setup_winring0_service, verify_winring0_setup, WINRING0_DRIVER},
 };
-use utils::{is_elevated, reboot_into_bios, reboot_system};
 use widgets::{
-    button::{ActionButton, ButtonState},
+    button::{ActionButton, ButtonState, BUTTON_DIMENSIONS},
     switch::ToggleSwitch,
     TweakWidget,
 };
 
 // Constants for layout and spacing
-const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 2.0 + GRID_HORIZONTAL_SPACING * 2.0 + 10.0;
+const WINDOW_WIDTH: f32 = TWEAK_CONTAINER_WIDTH * 3.0 + GRID_HORIZONTAL_SPACING * 3.0 + 10.0;
 const WINDOW_HEIGHT: f32 = 900.0;
 
 // Controls the dimensions of each tweak container.
@@ -44,9 +44,6 @@ const GRID_HORIZONTAL_SPACING: f32 = 20.0; // Space between grid columns
 // Status Bar Padding
 const STATUS_BAR_PADDING: f32 = 5.0; // Padding inside the status bar
 
-// Default Button Dimensions
-const BUTTON_DIMENSIONS: Vec2 = vec2(40.0, 20.0);
-
 /// Represents your application's main structure.
 pub struct MyApp {
     pub tweaks: BTreeMap<TweakId, Tweak<'static>>,
@@ -55,6 +52,8 @@ pub struct MyApp {
     // State tracking for initial state reads
     pub initial_states_loaded: bool,
     pub pending_initial_state_reads: usize,
+
+    pub dialogs: Dialogs<'static>,
 }
 
 impl MyApp {
@@ -62,31 +61,59 @@ impl MyApp {
         let app_span = tracing::span!(Level::INFO, "App Initialization");
         let _app_guard = app_span.enter();
 
-        let mut tweaks = tweaks::definitions::all();
+        let mut tweaks = tweaks::all_tweaks();
         let orchestrator = TaskOrchestrator::new();
 
-        for (id, tweak) in tweaks.iter_mut() {
-            let task = TweakTask {
-                id: *id,
-                method: tweak.method.clone(),
-                action: TweakAction::ReadInitialState,
-            };
-            if let Err(e) = orchestrator.submit_task(task) {
-                tracing::error!(
-                    "Failed to submit initial state task for tweak {:?}: {:?}",
-                    id,
-                    e
-                );
+        let pending_initial_state_reads = tweaks.len();
+
+        let mut dialogs = Dialogs::new();
+
+        let mut app_setup_ok = true;
+
+        // Check for elevated privileges
+        if !is_elevated() {
+            dialogs.add(DialogDetails::new(
+                StandardDialog::info("Warning", "This program must be run in administrator mode.")
+                    .buttons(vec![("OK".into(), StandardReply::Ok)]),
+            ));
+            app_setup_ok = false;
+        } else {
+            if let Err(e) = verify_winring0_setup() {
+                tracing::debug!("WinRing0 driver not found or not installed: {:?}", e);
+                if let Err(e) = setup_winring0_service() {
+                    tracing::error!("Failed to initialize WinRing0 service: {:?}", e);
+                    dialogs.add(DialogDetails::new(
+                        StandardDialog::error("Warning", &format!("Failed to initialize WinRing0"))
+                            .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                    ));
+                    app_setup_ok = false;
+                }
             }
         }
 
-        let pending_initial_state_reads = tweaks.len();
+        if app_setup_ok {
+            for (id, tweak) in tweaks.iter_mut() {
+                let task = TweakTask {
+                    id: *id,
+                    method: tweak.method.clone(),
+                    action: TweakAction::ReadInitialState,
+                };
+                if let Err(e) = orchestrator.submit_task(task) {
+                    tracing::error!(
+                        "Failed to submit initial state task for tweak {:?}: {:?}",
+                        id,
+                        e
+                    );
+                }
+            }
+        }
 
         Self {
             tweaks,
             orchestrator,
             initial_states_loaded: false,
             pending_initial_state_reads,
+            dialogs,
         }
     }
 
@@ -113,11 +140,13 @@ impl MyApp {
                         _ => {}
                     }
                 } else {
-                    tweak.status = TweakStatus::Failed(
-                        result
-                            .error
-                            .unwrap_or_else(|| anyhow::Error::msg("Unknown error")),
-                    );
+                    // Set the tweak status to Failed with the error
+                    let error_message = result
+                        .error
+                        .unwrap_or_else(|| anyhow::Error::msg("Unknown error"));
+                    // Log the error
+                    tracing::error!("Failed to process tweak {:?}: {}", result.id, error_message);
+                    tweak.status = TweakStatus::Failed(error_message);
                 }
             }
 
@@ -152,7 +181,8 @@ impl MyApp {
     }
 
     fn cleanup(&mut self) {
-        let task = TweakTask {
+        // disable low-res mode
+        if let Err(e) = self.orchestrator.submit_task(TweakTask {
             id: TweakId::LowResMode,
             method: self
                 .tweaks
@@ -161,20 +191,35 @@ impl MyApp {
                 .method
                 .clone(),
             action: TweakAction::Revert,
-        };
-        if let Err(e) = self.orchestrator.submit_task(task) {
+        }) {
             tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
         }
+        // disable slow-mode
+        if let Err(e) = self.orchestrator.submit_task(TweakTask {
+            id: TweakId::SlowMode,
+            method: self.tweaks.get(&TweakId::SlowMode).unwrap().method.clone(),
+            action: TweakAction::Revert,
+        }) {
+            tracing::error!("Failed to submit revert task for slow mode: {:?}", e);
+        }
+        // drop the WinRing0 driver
+        drop(WINRING0_DRIVER.lock().unwrap());
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
         egui::Grid::new("main_columns_grid")
-            .num_columns(2)
+            .num_columns(3)
             .spacing(egui::vec2(GRID_HORIZONTAL_SPACING, 0.0))
             .striped(true)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     for category in TweakCategory::left() {
+                        self.draw_category_section(ui, category);
+                    }
+                });
+
+                ui.vertical(|ui| {
+                    for category in TweakCategory::middle() {
                         self.draw_category_section(ui, category);
                     }
                 });
@@ -369,11 +414,11 @@ impl MyApp {
                         self.cleanup();
                         if let Err(e) = reboot_system() {
                             tracing::error!("Failed to initiate reboot: {:?}", e);
-                            tinyfiledialogs::message_box_ok(
-                                "Overclocking Assistant",
-                                &format!("Failed to reboot the system: {:?}", e),
-                                tinyfiledialogs::MessageBoxIcon::Error,
-                            );
+                            // tinyfiledialogs::message_box_ok(
+                            //     "Overclocking Assistant",
+                            //     &format!("Failed to reboot the system: {:?}", e),
+                            //     tinyfiledialogs::MessageBoxIcon::Error,
+                            // );
                         }
                     }
                 });
@@ -386,26 +431,38 @@ impl MyApp {
 
 impl App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
-        self.update_tweak_states();
-
-        if !self.initial_states_loaded {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(200.0);
-                    ui.heading("Reading system state...");
-                    ui.add(egui::widgets::Spinner::new());
-                });
-            });
+        if !self.dialogs.dialogs().is_empty() {
+            if let Some(res) = self.dialogs.show(ctx) {
+                // handle reply from close confirmation dialog
+                match res.reply() {
+                    Ok(StandardReply::Ok) => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    _ => {}
+                }
+            }
         } else {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        self.draw_ui(ui);
-                    });
-            });
+            self.update_tweak_states();
 
-            self.draw_status_bar(ctx);
+            if !self.initial_states_loaded {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(200.0);
+                        ui.heading("Reading system state...");
+                        ui.add(egui::widgets::Spinner::new());
+                    });
+                });
+            } else {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            self.draw_ui(ui);
+                        });
+                });
+
+                self.draw_status_bar(ctx);
+            }
         }
     }
 
@@ -415,29 +472,6 @@ impl App for MyApp {
 }
 
 fn main() -> eframe::Result<()> {
-    // Check for elevated privileges
-    if !is_elevated() {
-        tinyfiledialogs::message_box_ok(
-            "OC Tool",
-            "Administrator privileges required",
-            tinyfiledialogs::MessageBoxIcon::Error,
-        );
-        return Ok(());
-    }
-
-    if verify_winring0_setup().is_err() {
-        match setup_winring0_service() {
-            Ok(_) => {}
-            Err(e) => {
-                tinyfiledialogs::message_box_ok(
-                    "OC Tool",
-                    &format!("Failed to initialize WinRing0: {:?}", e),
-                    tinyfiledialogs::MessageBoxIcon::Error,
-                );
-                return Ok(());
-            }
-        }
-    }
     // Initialize logging based on build mode
     #[cfg(debug_assertions)]
     {

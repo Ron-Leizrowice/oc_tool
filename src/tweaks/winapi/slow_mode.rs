@@ -3,13 +3,12 @@
 use anyhow::{Context, Result};
 use windows::core::GUID;
 
-use super::TweakId;
 use crate::{
     power::{
         enumerate_power_subgroups_and_settings, get_active_power_scheme, read_ac_value_index,
         set_active_power_scheme, write_ac_value_index, PowerScheme, PowerSetting, PowerSubgroup,
     },
-    tweaks::TweakMethod,
+    tweaks::{TweakId, TweakMethod},
 };
 
 pub const POWER_SAVER_GUID: GUID = GUID::from_u128(0xa1841308_3541_4fab_bc81_f71556f20b4a);

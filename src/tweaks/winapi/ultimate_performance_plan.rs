@@ -2,13 +2,12 @@
 
 use windows::core::GUID;
 
-use super::TweakId;
 use crate::{
     power::{
         duplicate_power_scheme, get_active_power_scheme, get_all_power_schemes,
         set_active_power_scheme, PowerScheme,
     },
-    tweaks::TweakMethod,
+    tweaks::{TweakId, TweakMethod},
 };
 
 const ULTIMATE_PERFORMANCE_POWER_SCHEME_GUID: GUID =

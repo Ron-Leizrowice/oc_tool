@@ -11,8 +11,7 @@ use windows::{
     },
 };
 
-use super::TweakId;
-use crate::tweaks::TweakMethod;
+use crate::tweaks::{TweakId, TweakMethod};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplaySettingsType {

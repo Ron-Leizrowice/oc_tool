@@ -19,8 +19,7 @@ use windows::{
     },
 };
 
-use super::TweakId;
-use crate::tweaks::TweakMethod;
+use crate::tweaks::{TweakId, TweakMethod};
 
 const SERVICES_TO_KILL: &[&str; 106] = &[
     "AdobeARMservice",            // Adobe Acrobat Update Service
@@ -162,6 +161,11 @@ pub struct KillNonCriticalServicesTweak {
 }
 
 impl KillNonCriticalServicesTweak {
+    pub fn new() -> Self {
+        Self {
+            id: TweakId::KillAllNonCriticalServices,
+        }
+    }
     /// Helper function to execute a closure with a timeout.
     fn execute_with_timeout<F, T>(f: F, timeout: Duration) -> Result<T, &'static str>
     where
