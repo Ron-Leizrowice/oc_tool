@@ -12,6 +12,7 @@ use windows::{
     },
 };
 
+use super::registry::read_registry_value;
 use crate::{
     tweaks::registry::method::RegistryModification,
     utils::registry::{create_or_modify_registry_value, RegistryKeyValue},
@@ -180,7 +181,7 @@ impl Drop for WinRing0 {
 // Modify the setup_winring0_service function
 pub fn setup_winring0_driver() -> anyhow::Result<()> {
     // 1. Check that the WinRing0 DLL is in the current directory
-    let winring0_dll_path = std::env::current_dir().unwrap().join(WINRING0_DLL);
+    let winring0_dll_path = std::env::current_dir()?.join(WINRING0_DLL);
     if !winring0_dll_path.exists() {
         return Err(anyhow::anyhow!(
             "WinRing0 DLL not found in current directory: {:?}",
@@ -188,33 +189,83 @@ pub fn setup_winring0_driver() -> anyhow::Result<()> {
         ));
     }
 
-    // Create/modify the registry entries for disabling the Vulnerable Driver Blocklist
-    for modification in DISABLE_VULNERABLE_DRIVER_BLOCKLIST.iter() {
-        if let Err(e) = create_or_modify_registry_value(
-            modification.path,
-            modification.key,
-            &modification.enabled,
-        ) {
-            return Err(anyhow::anyhow!(
-                "Failed to create or modify registry value: {:?}",
-                e
-            ));
+    // Function to handle registry modifications
+    fn apply_registry_modifications(modifications: &[RegistryModification]) -> anyhow::Result<()> {
+        for modification in modifications {
+            // Read the current value of the registry key
+            let current_state = match read_registry_value(modification.path, modification.key) {
+                Ok(Some(value)) => Some(value),
+                Ok(None) => None, // Key does not exist
+                Err(e) => {
+                    // Log the error and decide whether to continue or return
+                    // Here, we'll return the error to halt the setup
+                    return Err(anyhow::anyhow!(
+                        "Failed to read registry value (Path: {}, Key: {}): {:?}",
+                        modification.path,
+                        modification.key,
+                        e
+                    ));
+                }
+            };
+
+            // Determine the desired value based on whether it's being enabled or disabled
+            let desired_value = if modification.enabled != RegistryKeyValue::Dword(0) {
+                &modification.enabled
+            } else {
+                // If enabled is Dword(0), check if 'disabled' is Some
+                match &modification.disabled {
+                    Some(disabled_val) => disabled_val,
+                    None => &modification.enabled, // Fallback to enabled if disabled is None
+                }
+            };
+
+            // Compare current state with desired value
+            let needs_update = match (&current_state, desired_value) {
+                (Some(current), desired) => current != desired,
+                (None, _) => true, // Key does not exist; needs to be created
+            };
+
+            if needs_update {
+                // Log that we're modifying the registry key
+                tracing::debug!(
+                    "Modifying registry key: Path: {}, Key: {}, Setting to: {:?}",
+                    modification.path,
+                    modification.key,
+                    desired_value
+                );
+
+                // Create or modify the registry value
+                create_or_modify_registry_value(
+                    modification.path,
+                    modification.key,
+                    desired_value,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to create or modify registry value (Path: {}, Key: {}): {:?}",
+                        modification.path,
+                        modification.key,
+                        e
+                    )
+                })?;
+            } else {
+                // Log that the registry key already matches the desired state
+                tracing::debug!(
+                    "Registry key already set correctly: Path: {}, Key: {}, Value: {:?}",
+                    modification.path,
+                    modification.key,
+                    desired_value
+                );
+            }
         }
+        Ok(())
     }
 
-    // Create/modify the registry entries for disabling Hypervisor Enforced Code Integrity
-    for modification in DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY.iter() {
-        if let Err(e) = create_or_modify_registry_value(
-            modification.path,
-            modification.key,
-            &modification.enabled,
-        ) {
-            return Err(anyhow::anyhow!(
-                "Failed to create or modify registry value: {:?}",
-                e
-            ));
-        }
-    }
+    // Apply modifications for Vulnerable Driver Blocklist
+    apply_registry_modifications(&DISABLE_VULNERABLE_DRIVER_BLOCKLIST)?;
+
+    // Apply modifications for Hypervisor Enforced Code Integrity
+    apply_registry_modifications(&DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY)?;
 
     Ok(())
 }

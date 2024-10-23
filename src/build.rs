@@ -11,4 +11,5 @@ fn main() {
         .unwrap();
 
     fs::copy("src/WinRing0x64.dll", exe_dir.join("WinRing0x64.dll")).expect("Failed to copy DLL");
+    fs::copy("src/WinRing0x64.sys", exe_dir.join("WinRing0x64.sys")).expect("Failed to copy SYS");
 }

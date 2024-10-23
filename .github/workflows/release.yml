@@ -24,6 +24,9 @@ jobs:
           if (!(Test-Path target\release-lto\WinRing0x64.dll)) {
             throw "WinRing0x64.dll not found!"
           }
+            if (!(Test-Path target\release-lto\WinRing0x64.sys)) {
+            throw "WinRing0x64.sys not found!"
+          }
 
       - name: Create Release Zip
         shell: pwsh
@@ -31,6 +34,7 @@ jobs:
           $files = @(
             'target\release-lto\oc_tool.exe',
             'target\release-lto\WinRing0x64.dll'
+            'target\release-lto\WinRing0x64.sys'
           )
           Compress-Archive -Path $files -DestinationPath oc_tool.zip -Force
 

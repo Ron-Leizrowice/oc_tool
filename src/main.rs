@@ -70,7 +70,7 @@ impl MyApp {
                     dialogs.add(DialogDetails::new(
                         StandardDialog::error(
                             "WinRing0 Initialization Failed",
-                            format!("Failed to initialize WinRing0:\n{:?}", err),
+                            format!("Failed to initialize WinRing0:\n{}", err),
                         )
                         .buttons(vec![("OK".into(), StandardReply::Ok)]),
                     ));
@@ -90,6 +90,14 @@ impl MyApp {
                     id,
                     e
                 );
+                // Add a dialog to inform the user about the task submission failure
+                dialogs.add(DialogDetails::new(
+                    StandardDialog::error(
+                        "Initialization Error",
+                        format!("Failed to initialize tweak {:?}: {:?}", id, e),
+                    )
+                    .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                ));
             }
         }
 
@@ -130,6 +138,15 @@ impl MyApp {
                     let error_message = result.error.unwrap();
                     tracing::error!("Failed to process tweak {:?}: {}", result.id, error_message);
                     tweak.status = TweakStatus::Failed(error_message.to_string());
+
+                    // Add a dialog to inform the user about the tweak failure
+                    self.dialogs.add(DialogDetails::new(
+                        StandardDialog::error(
+                            "Tweak Application Error",
+                            format!("Failed to apply tweak {:?}: {}", result.id, error_message),
+                        )
+                        .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                    ));
                 }
             }
 
@@ -144,22 +161,40 @@ impl MyApp {
         }
 
         // slow_mode and ultimate_performance are mutually exclusive
-        let slow_mode_state = self.tweaks.get(&TweakId::SlowMode).unwrap().enabled;
+        let slow_mode_state = self
+            .tweaks
+            .get(&TweakId::SlowMode)
+            .map(|t| t.enabled)
+            .unwrap_or(false);
         let ultimate_performance_state = self
             .tweaks
             .get(&TweakId::UltimatePerformancePlan)
-            .unwrap()
-            .enabled;
+            .map(|t| t.enabled)
+            .unwrap_or(false);
+
         if slow_mode_state && ultimate_performance_state {
-            // this should never happen
-            panic!("Both Slow Mode and Ultimate Performance are enabled at the same time.");
+            // Instead of panicking, add an error dialog
+            tracing::error!("Both Slow Mode and Ultimate Performance are enabled simultaneously.");
+            self.dialogs.add(DialogDetails::new(
+                StandardDialog::error(
+                    "Configuration Conflict",
+                    "Both Slow Mode and Ultimate Performance are enabled at the same time. Please disable one to proceed.",
+                )
+                .buttons(vec![("OK".into(), StandardReply::Ok)]),
+            ));
+            // Optionally, you can automatically disable one to resolve the conflict
+            // For example, disable Ultimate Performance if Slow Mode is enabled
+            if let Some(tweak) = self.tweaks.get_mut(&TweakId::UltimatePerformancePlan) {
+                tweak.enabled = false;
+            }
         } else if slow_mode_state {
-            self.tweaks
-                .get_mut(&TweakId::UltimatePerformancePlan)
-                .unwrap()
-                .enabled = false;
+            if let Some(tweak) = self.tweaks.get_mut(&TweakId::UltimatePerformancePlan) {
+                tweak.enabled = false;
+            }
         } else if ultimate_performance_state {
-            self.tweaks.get_mut(&TweakId::SlowMode).unwrap().enabled = false;
+            if let Some(tweak) = self.tweaks.get_mut(&TweakId::SlowMode) {
+                tweak.enabled = false;
+            }
         }
     }
 
@@ -321,6 +356,14 @@ impl MyApp {
                     Ok(_) => {}
                     Err(e) => {
                         tweak_entry.status = TweakStatus::Failed(e.to_string());
+                        // Add a dialog to inform the user about the task submission failure
+                        self.dialogs.add(DialogDetails::new(
+                            StandardDialog::error(
+                                "Task Submission Error",
+                                format!("Failed to submit task for tweak {:?}: {}", tweak_id, e),
+                            )
+                            .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                        ));
                     }
                 }
             }
@@ -349,6 +392,14 @@ impl MyApp {
                     Ok(_) => {}
                     Err(e) => {
                         tweak_entry.status = TweakStatus::Failed(e.to_string());
+                        // Add a dialog to inform the user about the task submission failure
+                        self.dialogs.add(DialogDetails::new(
+                            StandardDialog::error(
+                                "Task Submission Error",
+                                format!("Failed to submit task for tweak {:?}: {}", tweak_id, e),
+                            )
+                            .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                        ));
                     }
                 }
             }
@@ -407,6 +458,22 @@ impl MyApp {
                                                     "Failed to reboot into BIOS: {:?}",
                                                     e
                                                 );
+                                                // Add a dialog to inform the user about the failure
+                                                self.dialogs.add(
+                                                    DialogDetails::new(
+                                                        StandardDialog::error(
+                                                            "Reboot Error",
+                                                            format!(
+                                                                "Failed to reboot into BIOS: {:?}",
+                                                                e
+                                                            ),
+                                                        )
+                                                        .buttons(vec![(
+                                                            "OK".into(),
+                                                            StandardReply::Ok,
+                                                        )]),
+                                                    ),
+                                                );
                                             }
                                         }
                                     }
@@ -421,6 +488,14 @@ impl MyApp {
                                         self.cleanup();
                                         if let Err(e) = reboot_system() {
                                             tracing::error!("Failed to initiate reboot: {:?}", e);
+                                            // Add a dialog to inform the user about the failure
+                                            self.dialogs.add(DialogDetails::new(
+                                                StandardDialog::error(
+                                                    "Reboot Error",
+                                                    format!("Failed to initiate reboot: {:?}", e),
+                                                )
+                                                .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                                            ));
                                         }
                                     }
                                 },
@@ -433,6 +508,7 @@ impl MyApp {
 
 impl App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        // Process dialogs first
         if !self.dialogs.dialogs().is_empty() {
             if let Some(res) = self.dialogs.show(ctx) {
                 // handle reply from close confirmation dialog
