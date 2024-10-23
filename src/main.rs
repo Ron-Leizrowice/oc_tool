@@ -138,15 +138,6 @@ impl MyApp {
                     let error_message = result.error.unwrap();
                     tracing::error!("Failed to process tweak {:?}: {}", result.id, error_message);
                     tweak.status = TweakStatus::Failed(error_message.to_string());
-
-                    // Add a dialog to inform the user about the tweak failure
-                    self.dialogs.add(DialogDetails::new(
-                        StandardDialog::error(
-                            "Tweak Application Error",
-                            format!("Failed to apply tweak {:?}: {}", result.id, error_message),
-                        )
-                        .buttons(vec![("OK".into(), StandardReply::Ok)]),
-                    ));
                 }
             }
 
@@ -356,14 +347,6 @@ impl MyApp {
                     Ok(_) => {}
                     Err(e) => {
                         tweak_entry.status = TweakStatus::Failed(e.to_string());
-                        // Add a dialog to inform the user about the task submission failure
-                        self.dialogs.add(DialogDetails::new(
-                            StandardDialog::error(
-                                "Task Submission Error",
-                                format!("Failed to submit task for tweak {:?}: {}", tweak_id, e),
-                            )
-                            .buttons(vec![("OK".into(), StandardReply::Ok)]),
-                        ));
                     }
                 }
             }
@@ -392,14 +375,6 @@ impl MyApp {
                     Ok(_) => {}
                     Err(e) => {
                         tweak_entry.status = TweakStatus::Failed(e.to_string());
-                        // Add a dialog to inform the user about the task submission failure
-                        self.dialogs.add(DialogDetails::new(
-                            StandardDialog::error(
-                                "Task Submission Error",
-                                format!("Failed to submit task for tweak {:?}: {}", tweak_id, e),
-                            )
-                            .buttons(vec![("OK".into(), StandardReply::Ok)]),
-                        ));
                     }
                 }
             }
