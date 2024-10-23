@@ -72,7 +72,6 @@ pub enum TweakId {
     IndirectBranchPredictionBarrier,
     AutomaticIbrsEnable,
     EnableUpperAddressIgnore,
-    DisableSecureVirtualMachine,
     DowngradeFp512ToFp256,
     DisableRsmSpecialBusCycle,
     DisableSmiSpecialBusCycle,
@@ -97,7 +96,6 @@ pub enum TweakId {
     EnableL3CodeDataPrioritization,
     DisableStreamingStores,
     DisableRedirectForReturn,
-    DisableGlobalCStates,
     DisableOpCache,
     SpeculativeStoreModes,
     DisableMonitorMonitorAndMwait,
@@ -108,6 +106,7 @@ pub enum TweakId {
     DisablePss,
     DisableCoreWatchdogTimer,
     DisablePlatformFirstErrorHandling,
+    DisableSecureVirtualMachine,
 }
 
 pub fn all_tweaks<'a>() -> BTreeMap<TweakId, Tweak<'a>> {

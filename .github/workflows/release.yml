@@ -21,9 +21,6 @@ jobs:
 
       - name: Ensure Additional Files Exist
         run: |
-          if (!(Test-Path target\release-lto\WinRing0x64.sys)) {
-            throw "WinRing0x64.sys not found!"
-          }
           if (!(Test-Path target\release-lto\WinRing0x64.dll)) {
             throw "WinRing0x64.dll not found!"
           }

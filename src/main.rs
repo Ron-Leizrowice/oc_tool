@@ -370,7 +370,7 @@ impl MyApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("v0.1.5a")
+                                RichText::new("v0.1.6a")
                                     .font(FontId::proportional(LABEL_FONT_SIZE)),
                             );
                             ui.separator();

@@ -9,38 +9,6 @@ pub mod method;
 pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
     vec![
         (TweakId::DowngradeFp512ToFp256, downgrade_fp512_to_fp256()),
-        (
-            TweakId::DisableRsmSpecialBusCycle,
-            disable_rsm_special_bus_cycle(),
-        ),
-        (
-            TweakId::DisableSmiSpecialBusCycle,
-            disable_smi_special_bus_cycle(),
-        ),
-        (
-            TweakId::DisablePredictiveStoreForwarding,
-            disable_predictive_store_forwarding(),
-        ),
-        (
-            TweakId::DisableSpeculativeStoreBypass,
-            disable_speculative_store_bypass(),
-        ),
-        (
-            TweakId::DisableSingleThreadIndirectBranchPredictor,
-            disable_single_thread_indirect_branch_predictor(),
-        ),
-        (
-            TweakId::DisableIndirectBranchRestrictionSpeculation,
-            disable_indirect_branch_restriction_speculation(),
-        ),
-        (
-            TweakId::SelectiveBranchPredictorBarrier,
-            selective_branch_predictor_barrier(),
-        ),
-        (
-            TweakId::IndirectBranchPredictionBarrier,
-            indirect_branch_prediction_barrier(),
-        ),
         (TweakId::AutomaticIbrsEnable, automatic_ibrs_enable()),
         (
             TweakId::EnableUpperAddressIgnore,
@@ -49,15 +17,6 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
         (
             TweakId::DisableSecureVirtualMachine,
             disable_secure_virtual_machine(),
-        ),
-        (
-            TweakId::DisableSecureVirtualMachine,
-            disable_secure_virtual_machine(),
-        ),
-        (TweakId::LongModeEnable, long_mode_enable()),
-        (
-            TweakId::SystemCallExtensionEnable,
-            system_call_extension_enable(),
         ),
         (
             TweakId::AggressivePrefetchProfile,
@@ -83,7 +42,6 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             TweakId::DisableL1StreamPrefetcher,
             disable_l1_stream_prefetcher(),
         ),
-        (TweakId::EnableTom2WriteBack, enable_tom2_write_back()),
         (
             TweakId::EnableMtrrFixedDramAttributes,
             enable_mtrr_fixed_dram_attributes(),
@@ -92,11 +50,6 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             TweakId::EnableMtrrFixedDramModification,
             enable_mtrr_fixed_dram_modification(),
         ),
-        (
-            TweakId::EnableMtrrTopOfMemory2,
-            enable_mtrr_top_of_memory_2(),
-        ),
-        (TweakId::EnableMtrrVariableDram, enable_mtrr_variable_dram()),
         (
             TweakId::EnableTranslationCacheExtension,
             translation_cache_extension_enable(),
@@ -109,10 +62,6 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
         (
             TweakId::EnableInterruptibleWbinvd,
             enable_interruptible_wbinvd(),
-        ),
-        (
-            TweakId::EnableInvdToWbinvdConversion,
-            enable_invd_to_wbinvd_conversion(),
         ),
         (
             TweakId::DisableMcaStatusWriteEnable,
@@ -133,10 +82,10 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             TweakId::SpeculativeStoreModes,
             set_cpu_speculative_store_modes_more_speculative(),
         ),
-        (
-            TweakId::DisableMonitorMonitorAndMwait,
-            disable_monitor_monitor_and_mwait(),
-        ),
+        // (
+        //     TweakId::DisableMonitorMonitorAndMwait,
+        //     disable_monitor_monitor_and_mwait(),
+        // ),
         (TweakId::DisableAvx512, disable_avx512()),
         (
             TweakId::DisableFastShortRepMovsb,
@@ -150,7 +99,6 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             TweakId::DisableRepMovStosStreaming,
             disable_rep_mov_stos_streaming(),
         ),
-        (TweakId::DisablePss, disable_pss()),
         (
             TweakId::DisableCoreWatchdogTimer,
             disable_core_watchdog_timer(),
@@ -172,85 +120,85 @@ pub fn all_msr_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
 // 1 STIBP. Read-write. Reset: 0. Single thread indirect branch predictor.
 // 0 IBRS. Read-write. Reset: 0. Indirect branch restriction speculation.
 
-pub fn disable_predictive_store_forwarding<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable Predictive Store Forwarding",
-        "Disables Predictive Store Forwarding (PSFD) to prevent speculative execution of store instructions from forwarding data to subsequent load instructions.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisablePredictiveStoreForwarding,
-            msrs : vec![
-                MsrTweakState {
-                    index: 0x0000_0048,
-                    bit: 7,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn disable_predictive_store_forwarding<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Disable Predictive Store Forwarding",
+//         "Disables CPU's ability to speculatively forward store data to subsequent loads. While this can mitigate potential security vulnerabilities, it may impact performance in scenarios with frequent store-to-load dependencies.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::DisablePredictiveStoreForwarding,
+//             msrs : vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0048,
+//                     bit: 7,
+//                     state: true
+//                 }
+//             ],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
-pub fn disable_speculative_store_bypass<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable SSB",
-        "Disables Speculative Store Bypass (SSBD) to prevent speculative execution of store instructions from bypassing the store buffer.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableSpeculativeStoreBypass,
-            msrs : vec![
-                MsrTweakState {
-                    index: 0x0000_0048,
-                    bit: 2,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn disable_speculative_store_bypass<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Disable SSB",
+//         "Disables Speculative Store Bypass (SSBD) preventing loads from executing before the addresses of all older stores are known. This mitigates Speculative Store Bypass vulnerabilities but may reduce performance in memory-intensive workloads.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::DisableSpeculativeStoreBypass,
+//             msrs : vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0048,
+//                     bit: 2,
+//                     state: true
+//                 }
+//             ],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
-pub fn disable_single_thread_indirect_branch_predictor<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable STIBP",
-        "Disables the Single Thread Indirect Branch Predictor (STIBP) to prevent indirect branch prediction across threads.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableSingleThreadIndirectBranchPredictor,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0x0000_0048,
-                    bit: 1,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn disable_single_thread_indirect_branch_predictor<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Disable STIBP",
+//         "Disables the Single Thread Indirect Branch Predictor (STIBP), preventing one CPU thread from using branch predictions trained by another thread. While this can enhance security against cross-thread attacks, it may impact performance in multi-threaded applications.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::DisableSingleThreadIndirectBranchPredictor,
+//             msrs: vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0048,
+//                     bit: 1,
+//                     state: true
+//                 }
+//             ],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
-pub fn disable_indirect_branch_restriction_speculation<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable IBRS",
-        "Disables Indirect Branch Restriction Speculation (IBRS) to prevent speculation of indirect branches.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableIndirectBranchRestrictionSpeculation,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0x0000_0048,
-                    bit: 0,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn disable_indirect_branch_restriction_speculation<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Disable IBRS",
+//         "Disables Indirect Branch Restriction Speculation (IBRS), controlling the CPU's ability to speculatively execute indirect branches. While disabling can improve performance, it may expose the system to certain branch target injection attacks.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::DisableIndirectBranchRestrictionSpeculation,
+//             msrs: vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0048,
+//                     bit: 0,
+//                     state: true
+//                 }
+//             ],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
 // MSR0000_0049 [Prediction Command] (Core::X86::Msr::PRED_CMD)
 // Write-only,Error-on-read. Reset: 0000_0000_0000_0000h.
@@ -263,45 +211,45 @@ pub fn disable_indirect_branch_restriction_speculation<'a>() -> Tweak<'a> {
 // 0 IBPB: indirect branch prediction barrier. Write-only,Error-on-read. Reset: 0. Supported if
 // Core::X86::Cpuid::FeatureExtIdEbx[IBPB] == 1.
 
-pub fn selective_branch_predictor_barrier<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Selective Branch Predictor Barrier",
-        "Initiates a Selective Branch Predictor Barrier (SBPB) to prevent the branch predictor from being influenced by indirect branches.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::SelectiveBranchPredictorBarrier,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0x0000_0049,
-                    bit: 7,
-                    state: true
-                }
-            ],
-            readable: false,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn selective_branch_predictor_barrier<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Selective Branch Predictor Barrier",
+//         "Initiates a selective flush of the branch predictor to prevent exploitation of branch prediction history. This targeted approach offers better performance than full branch predictor barriers while still providing security benefits.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::SelectiveBranchPredictorBarrier,
+//             msrs: vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0049,
+//                     bit: 7,
+//                     state: true
+//                 }
+//             ],
+//             readable: false,
+//         },
+//         false,
+//     )
+// }
 
-pub fn indirect_branch_prediction_barrier<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Indirect Branch Prediction Barrier",
-        "Initiates an Indirect Branch Prediction Barrier (IBPB) to prevent the branch predictor from being influenced by indirect branches.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::IndirectBranchPredictionBarrier,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0x0000_0049,
-                    bit: 0,
-                    state: true
-                }
-            ],
-            readable: false,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn indirect_branch_prediction_barrier<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Indirect Branch Prediction Barrier",
+//         "Forces a complete reset of the indirect branch predictor state, preventing cross-process exploitation of branch prediction. While more comprehensive than SBPB, it incurs higher performance overhead.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::IndirectBranchPredictionBarrier,
+//             msrs: vec![
+//                 MsrTweakState {
+//                     index: 0x0000_0049,
+//                     bit: 0,
+//                     state: true
+//                 }
+//             ],
+//             readable: false,
+//         },
+//         false,
+//     )
+// }
 
 // MSRC000_0080 [Extended Feature Enable] (Core::X86::Msr::EFER)
 // SKINIT Execution: 0000_0000_0000_0000h.
@@ -340,8 +288,8 @@ pub fn indirect_branch_prediction_barrier<'a>() -> Tweak<'a> {
 // systems as low latency system calls and returns.
 pub fn automatic_ibrs_enable<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
-        "Automatic IBRS Enable",
-        "Enables Automatic IBRS (Indirect Branch Restricted Speculation) to automatically enable IBRS protection for processes running at CPL 0 or SEV-SNP.",
+        "Enable Automatic IBRS",
+        "Automatically enables Indirect Branch Restricted Speculation for kernel-mode code (CPL=0) and SEV-SNP environments. This provides consistent protection against indirect branch attacks with lower overhead than manual IBRS control.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::AutomaticIbrsEnable,
@@ -354,14 +302,14 @@ pub fn automatic_ibrs_enable<'a>() -> Tweak<'a> {
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn enable_upper_address_ignore<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Enable Upper Address Ignore",
-        "Enables Upper Address Ignore to suppress canonical faults and allow tagging of upper virtual address bits.",
+        "Allows software to use upper bits of virtual addresses as metadata tags by suppressing canonical address checks. This can improve performance in specialized memory management scenarios while maintaining memory protection.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableUpperAddressIgnore,
@@ -374,54 +322,34 @@ pub fn enable_upper_address_ignore<'a>() -> Tweak<'a> {
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn enable_interruptible_wbinvd<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Enable Interruptible WBINVD",
-        "Allows the WBINVD instruction to be interruptible, reducing cache invalidation latency for improved performance.",
+        "Makes the Write-Back and Invalidate Cache (WBINVD) instruction interruptible, reducing system stall time during cache flushes. This can significantly improve system responsiveness during cache maintenance operations.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableInterruptibleWbinvd,
             msrs: vec![
                 MsrTweakState {
-                    index: 0xC000_0080, // Correct MSR index for EFER
+                    index: 0xC000_0080,
                     bit: 18,
                     state: true,
                 },
             ],
             readable: true,
         },
-        false, // Does not require reboot
-    )
-}
-
-pub fn enable_invd_to_wbinvd_conversion<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Enable INVD to WBINVD Conversion",
-        "Converts the INVD instruction to WBINVD, ensuring cache lines are written back before invalidation for improved cache coherence and performance.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::EnableInvdToWbinvdConversion,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0015, // HWCR MSR index
-                    bit: 4,
-                    state: true,
-                },
-            ],
-            readable: true,
-        },
-        false, // Does not require reboot
+        false,
     )
 }
 
 pub fn translation_cache_extension_enable<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Translation Cache Extension Enable",
-        "Enables Translation Cache Extension to invalidate PDC entries related to the linear address of the INVLPG instruction.",
+        "Optimizes INVLPG instruction behavior to only invalidate PDC entries related to the specified linear address instead of all entries. This can improve performance in scenarios with frequent TLB invalidations.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableTranslationCacheExtension,
@@ -434,14 +362,14 @@ pub fn translation_cache_extension_enable<'a>() -> Tweak<'a> {
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn enable_fast_fxsave_frstor<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Enable Fast FXSAVE/FRSTOR",
-        "Enables the fast FXSAVE/FRSTOR mechanism to accelerate floating-point and SIMD state saving/restoring.",
+        "Enables optimized handling of FPU and SSE state save/restore operations in 64-bit mode. This can significantly improve context switch performance in applications using floating-point or SIMD instructions.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableFastFxsaveFrstor,
@@ -454,14 +382,14 @@ pub fn enable_fast_fxsave_frstor<'a>() -> Tweak<'a> {
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn disable_secure_virtual_machine<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable Secure Virtual Machine",
-        "Disable Secure Virtual Machine (SVM) features.",
+        "Disables AMD's Secure Virtual Machine (SVM) technology. While this can reduce virtualization overhead, it should only be used in systems that don't require hardware-assisted virtualization or security features provided by SVM.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableSecureVirtualMachine,
@@ -472,63 +400,45 @@ pub fn disable_secure_virtual_machine<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
-// pub fn disable_no_execute_page<'a>() -> Tweak<'a> {
+// pub fn long_mode_enable<'a>() -> Tweak<'a> {
 //     Tweak::msr_tweak(
-//         "Disable No-Execute Page Protection",
-//         "Disables the no-execute page protection feature.",
+//         "Enable Long Mode",
+//         "Enables 64-bit long mode operation, allowing access to 64-bit instructions, registers, and addressing. This is fundamental for modern 64-bit operating systems and applications.",
 //         TweakCategory::Cpu,
 //         MSRTweak {
-//             id: TweakId::DisableNoExecutePage,
+//             id: TweakId::LongModeEnable,
 //             msrs: vec![MsrTweakState {
 //                 index: 0xC000_0080,
-//                 bit: 11,
-//                 state: false,
+//                 bit: 8,
+//                 state: true,
 //             }],
 //             readable: true,
 //         },
-//         false, // does not require reboot
+//         false,
 //     )
 // }
 
-pub fn long_mode_enable<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Long Mode Enable",
-        "Enables long mode.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::LongModeEnable,
-            msrs: vec![MsrTweakState {
-                index: 0xC000_0080,
-                bit: 8,
-                state: true,
-            }],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
-
-pub fn system_call_extension_enable<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "System Call Extension Enable",
-        "Enables the SYSCALL and SYSRET instructions, which can be used in flat addressed operating systems as low latency system calls and returns.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::SystemCallExtensionEnable,
-            msrs: vec![MsrTweakState {
-                index: 0xC000_0080,
-                bit: 0,
-                state: true,
-            }],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
+// pub fn system_call_extension_enable<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Enable System Call Extension",
+//         "Enables fast SYSCALL/SYSRET instructions for efficient system calls in 64-bit mode. This provides lower latency than traditional INT-based system calls, improving overall system performance.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::SystemCallExtensionEnable,
+//             msrs: vec![MsrTweakState {
+//                 index: 0xC000_0080,
+//                 bit: 0,
+//                 state: true,
+//             }],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
 // MSRC000_0108 [Prefetch Control] (Core::X86::Msr::PrefetchControl)
 // Reset: 0000_0000_0000_03C0h.
@@ -562,43 +472,42 @@ pub fn system_call_extension_enable<'a>() -> Tweak<'a> {
 pub fn enable_aggressive_prefetch_profile<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Enable Aggressive Prefetch Profile",
-        "Sets the prefetch aggressiveness profile to Level 3 (most aggressive) and enables prefetching.",
+        "Configures the CPU's prefetcher to its most aggressive setting (Level 3) and ensures prefetching is enabled. This can significantly improve performance in applications with predictable memory access patterns, but may increase power consumption and potentially harm performance with random access patterns.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::AggressivePrefetchProfile,
             msrs: vec![
-                // MasterEnable: Bit 6
                 MsrTweakState {
-                    index: 0xC000_0108 ,
+                    index: 0xC000_0108,
                     bit: 6,
                     state: true,
                 },
-                // PrefetchAggressivenessProfile: Bits 9:7 set to 3 (011)
                 MsrTweakState {
-                    index: 0xC000_0108 ,
+                    index: 0xC000_0108,
                     bit: 7,
                     state: true,
                 },
                 MsrTweakState {
-                    index: 0xC000_0108 ,
+                    index: 0xC000_0108,
                     bit: 8,
                     state: true,
                 },
                 MsrTweakState {
-                    index: 0xC000_0108 ,
+                    index: 0xC000_0108,
                     bit: 9,
-                    state: false, // Setting to '3' implies bit9:0, bit8:1, bit7:1
+                    state: false,
                 },
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
+
 pub fn disable_up_down_prefetcher<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable Up-Down Prefetcher",
-        "Disables the prefetcher that uses memory access history to determine whether to fetch the next or previous line into L2 cache for all memory accesses.",
+        "Disables the L2 cache prefetcher that predicts whether to fetch the next or previous cache line based on memory access history. This can be beneficial in workloads with random access patterns where prefetching might waste bandwidth.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableUpDownPrefetcher,
@@ -609,14 +518,14 @@ pub fn disable_up_down_prefetcher<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn disable_l2_stream_prefetcher<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable L2 Stream Prefetcher",
-        "Disables the prefetcher that uses history of memory access patterns to fetch additional sequential lines into L2 cache.",
+        "Disables the L2 cache's stream prefetcher that analyzes memory access patterns to prefetch sequential cache lines. Can improve performance in workloads with random access patterns or when memory bandwidth is a bottleneck.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableL2StreamPrefetcher,
@@ -627,14 +536,14 @@ pub fn disable_l2_stream_prefetcher<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn disable_l1_region_prefetcher<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable L1 Region Prefetcher",
-        "Disables the prefetcher that uses memory access history to fetch additional lines into L1 cache when the data access for a given instruction tends to be followed by a consistent pattern of other accesses within a localized region.",
+        "Disables the L1 cache prefetcher that detects and prefetches from localized memory regions based on access patterns. This can be beneficial in applications with scattered memory access patterns where spatial locality is poor.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableL1RegionPrefetcher,
@@ -645,14 +554,14 @@ pub fn disable_l1_region_prefetcher<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn disable_l1_stride_prefetcher<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable L1 Stride Prefetcher",
-        "Disables the stride prefetcher that uses memory access history of individual instructions to fetch additional lines into L1 cache when each access is a constant distance from the previous.",
+        "Disables the L1 cache prefetcher that detects constant-stride memory access patterns. While this prefetcher typically improves performance in array traversals and matrix operations, disabling it can be beneficial in workloads with irregular memory access patterns or when trying to reduce cache pollution.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableL1StridePrefetcher,
@@ -663,14 +572,14 @@ pub fn disable_l1_stride_prefetcher<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn disable_l1_stream_prefetcher<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable L1 Stream Prefetcher",
-        "Disables the stream prefetcher that uses history of memory access patterns to fetch additional sequential lines into L1 cache.",
+        "Disables the L1 cache's stream prefetcher that predicts and prefetches sequential memory access patterns. Can improve performance in workloads with random access patterns by preventing unnecessary prefetches and reducing memory bandwidth consumption.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisableL1StreamPrefetcher,
@@ -681,7 +590,7 @@ pub fn disable_l1_stream_prefetcher<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
@@ -744,75 +653,10 @@ pub fn disable_l1_stream_prefetcher<'a>() -> Tweak<'a> {
 // all of memory is UC.
 // Valid encodings are {00000b, Core
 
-pub fn enable_tom2_write_back<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Enable TOM2 Write-Back",
-        "Enforces Write-Back memory type for Top of Memory 2 (Tom2) to enhance cache performance.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::EnableTom2WriteBack,
-            msrs: vec![
-                // Set Tom2ForceMemTypeWB to 1
-                MsrTweakState {
-                    index: 0xC001_0010,
-                    bit: 22,
-                    state: true,
-                },
-                // Enable MTRRDefTypeEn to allow MTRRs to take effect
-                MsrTweakState {
-                    index: 0x0000_02FF,
-                    bit: 11,
-                    state: true,
-                },
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
-
-pub fn enable_mtrr_top_of_memory_2<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Enable MTRR Top of Memory 2",
-        "Enables the MTRR top of memory 2.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::EnableMtrrTopOfMemory2,
-            msrs: vec![MsrTweakState {
-                index: 0xC001_0010,
-                bit: 21,
-                state: true,
-            }],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
-
-pub fn enable_mtrr_variable_dram<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "MTRR Variable DRAM",
-        "Enables MTRR Variable DRAM to allow flexible memory type configurations for improved cache performance.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::EnableMtrrVariableDram,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0010,
-                    bit: 20,
-                    state: true,
-                },
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
-
 pub fn enable_mtrr_fixed_dram_modification<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
-        "MTRR Fixed DRAM Modification",
-        "Enables the MTRR fixed RdDram and WrDram modification.",
+        "Enable MTRR Fixed DRAM Modification",
+        "Enables modification of fixed Memory Type Range Registers (MTRRs) RdDram and WrDram attributes. This allows customization of cache behavior for fixed memory ranges, typically used during BIOS initialization for optimal memory subsystem configuration.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableMtrrFixedDramModification,
@@ -823,14 +667,14 @@ pub fn enable_mtrr_fixed_dram_modification<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
 pub fn enable_mtrr_fixed_dram_attributes<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
-        "MTRR Fixed DRAM Attributes",
-        "Enables MTRR Fixed DRAM attributes to optimize memory access patterns and cache utilization.",
+        "Enable MTRR Fixed DRAM Attributes",
+        "Enables the RdDram and WrDram attributes in fixed Memory Type Range Registers (MTRRs). This allows separate read and write caching policies for fixed memory ranges, enabling more sophisticated memory access optimizations.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableMtrrFixedDramAttributes,
@@ -843,7 +687,7 @@ pub fn enable_mtrr_fixed_dram_attributes<'a>() -> Tweak<'a> {
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
@@ -939,7 +783,7 @@ pub fn enable_mtrr_fixed_dram_attributes<'a>() -> Tweak<'a> {
 pub fn downgrade_fp512_to_fp256<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Downgrade FP512 to FP256",
-        "Downgrades FP512 performance to look more like FP256 performance.",
+        "Reduces FP512 (AVX-512) performance to match FP256 (AVX2) levels. This can prevent frequency throttling that typically occurs during AVX-512 operations, potentially improving overall system performance when full AVX-512 throughput isn't critical.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DowngradeFp512ToFp256,
@@ -950,47 +794,7 @@ pub fn downgrade_fp512_to_fp256<'a>() -> Tweak<'a> {
             }],
             readable: true,
         },
-        false, // does not require reboot
-    )
-}
-
-pub fn disable_rsm_special_bus_cycle<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable RSM Special Bus Cycle",
-        "Disables the RSM special bus cycle, which is used to read the system management mode (SMM) memory area.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableRsmSpecialBusCycle,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0010,
-                    bit: 14,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
-    )
-}
-
-pub fn disable_smi_special_bus_cycle<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable SMI Special Bus Cycle",
-        "Disables the SMI special bus cycle, which is used to read the system management mode (SMM) memory area.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableSmiSpecialBusCycle,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0010,
-                    bit: 13,
-                    state: true
-                }
-            ],
-            readable: true,
-        },
-        false, // does not require reboot
+        false,
     )
 }
 
@@ -1005,25 +809,20 @@ pub fn disable_smi_special_bus_cycle<'a>() -> Tweak<'a> {
 pub fn disable_control_flow_enforcement<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable Control-Flow Enforcement",
-        "Disables Control-Flow Enforcement Technology (CET) for system and user modes to eliminate associated performance overhead.",
+        "Disables Control-flow Enforcement Technology (CET). While this removes protection against control-flow hijacking attacks, it eliminates the performance overhead associated with shadow stacks and indirect branch tracking.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::DisbleControlFlowEnforcement,
             msrs: vec![
                 MsrTweakState {
-                    index: 0x0000_0DA0, // XSS MSR index
+                    index: 0x0000_0DA0,
                     bit: 12,
-                    state: false, // Disable CET_S
-                },
-                MsrTweakState {
-                    index: 0x0000_0DA0, // XSS MSR index
-                    bit: 11,
-                    state: false, // Disable CET_U
+                    state: false,
                 },
             ],
             readable: true,
         },
-        false, // does not require reboot
+        false,
     )
 }
 
@@ -1039,26 +838,6 @@ pub fn disable_mca_status_write_enable<'a>() -> Tweak<'a> {
                     index: 0xC001_0015, // HWCR MSR index
                     bit: 18,
                     state: false, // Disable McStatusWrEn
-                },
-            ],
-            readable: true,
-        },
-        false, // Does not require reboot
-    )
-}
-
-pub fn disable_monitor_mwait_user_mode<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable MONITOR/MWAIT",
-        "Disables the use of MONITOR and MWAIT instructions in user mode to prevent low-power states and maintain high performance.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableMonitorMonitorAndMwait,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0015, // HWCR MSR index
-                    bit: 10,
-                    state: false, // Disable MonMwaitUserEn
                 },
             ],
             readable: true,
@@ -1098,20 +877,20 @@ pub fn disable_tlb_cache<'a>() -> Tweak<'a> {
 pub fn enable_l3_code_data_prioritization<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Enable L3 Code-Data Prioritization",
-        "Enables Code and Data Prioritization Technology (CDP) to improve cache allocation and performance.",
+        "Activates Code and Data Prioritization Technology (CDP) in the L3 cache, allowing separate control over code and data placement. This can improve performance by optimizing cache utilization based on workload characteristics and preventing code/data contention.",
         TweakCategory::Cpu,
         MSRTweak {
             id: TweakId::EnableL3CodeDataPrioritization,
             msrs: vec![
                 MsrTweakState {
-                    index: 0x0000_0C81, // L3 QoS Configuration MSR index
+                    index: 0x0000_0C81,
                     bit: 0,
-                    state: true, // Enable CDP
+                    state: true,
                 },
             ],
             readable: true,
         },
-        false, // Does not require reboot
+        false,
     )
 }
 
@@ -1228,26 +1007,6 @@ pub fn set_cpu_speculative_store_modes_more_speculative<'a>() -> Tweak<'a> {
     )
 }
 
-pub fn disable_monitor_monitor_and_mwait<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable MONITOR/MWAIT",
-        "Disables MONITOR and MWAIT CPU instructions used for power-efficient idle states. This can reduce latency when returning from idle states at the cost of higher power consumption, potentially beneficial for latency-sensitive workloads.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisableMonitorMonitorAndMwait,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_0015,
-                    bit: 9,
-                    state: true,
-                },
-            ],
-            readable: true,
-        },
-        false,
-    )
-}
-
 pub fn disable_avx512<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
         "Disable AVX512",
@@ -1351,25 +1110,25 @@ pub fn disable_rep_mov_stos_streaming<'a>() -> Tweak<'a> {
     )
 }
 
-pub fn disable_pss<'a>() -> Tweak<'a> {
-    Tweak::msr_tweak(
-        "Disable PSS",
-        "Disables Performance Supported States (PSS) ACPI functionality. This can reduce latency in frequency transitions by limiting the available P-states, potentially improving performance in workloads sensitive to frequency scaling delays.",
-        TweakCategory::Cpu,
-        MSRTweak {
-            id: TweakId::DisablePss,
-            msrs: vec![
-                MsrTweakState {
-                    index: 0xC001_02B1,
-                    bit: 0,
-                    state: false,
-                },
-            ],
-            readable: true,
-        },
-        false,
-    )
-}
+// pub fn disable_pss<'a>() -> Tweak<'a> {
+//     Tweak::msr_tweak(
+//         "Disable PSS",
+//         "Disables Performance Supported States (PSS) ACPI functionality. This can reduce latency in frequency transitions by limiting the available P-states, potentially improving performance in workloads sensitive to frequency scaling delays.",
+//         TweakCategory::Cpu,
+//         MSRTweak {
+//             id: TweakId::DisablePss,
+//             msrs: vec![
+//                 MsrTweakState {
+//                     index: 0xC001_02B1,
+//                     bit: 0,
+//                     state: false,
+//                 },
+//             ],
+//             readable: true,
+//         },
+//         false,
+//     )
+// }
 
 pub fn disable_core_watchdog_timer<'a>() -> Tweak<'a> {
     Tweak::msr_tweak(
