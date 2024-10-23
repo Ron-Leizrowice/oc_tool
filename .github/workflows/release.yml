@@ -33,7 +33,6 @@ jobs:
         run: |
           $files = @(
             'target\release-lto\oc_tool.exe',
-            'target\release-lto\WinRing0x64.sys',
             'target\release-lto\WinRing0x64.dll'
           )
           Compress-Archive -Path $files -DestinationPath oc_tool.zip -Force

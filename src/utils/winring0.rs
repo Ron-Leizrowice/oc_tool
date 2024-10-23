@@ -2,7 +2,6 @@
 
 use std::{ffi::CStr, sync::Mutex};
 
-use anyhow::Context;
 use cstr::cstr;
 use once_cell::sync::Lazy;
 use windows::{
@@ -15,52 +14,11 @@ use windows::{
 
 use crate::{
     tweaks::registry::method::RegistryModification,
-    utils::{
-        registry::{create_or_modify_registry_value, read_registry_value, RegistryKeyValue},
-        services::{is_service_running, start_service},
-    },
+    utils::registry::{create_or_modify_registry_value, RegistryKeyValue},
 };
 
 // Define constants
-const SERVICE_NAME: &str = "WinRing0x64";
 const WINRING0_DLL: &str = "WinRing0x64.dll";
-const WINRING0_SYS: &str = "WinRing0x64.sys";
-
-static WINRING0_SERVICE: Lazy<Vec<RegistryModification>> = Lazy::new(|| {
-    vec![
-        RegistryModification {
-            path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinRing0x64",
-            key: "Type",
-            target_value: RegistryKeyValue::Dword(1),
-            default_value: None,
-        },
-        RegistryModification {
-            path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinRing0x64",
-            key: "Start",
-            target_value: RegistryKeyValue::Dword(1),
-            default_value: None,
-        },
-        RegistryModification {
-            path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinRing0x64",
-            key: "ErrorControl",
-            target_value: RegistryKeyValue::Dword(1),
-            default_value: None,
-        },
-        RegistryModification {
-            path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinRing0x64",
-            key: "ImagePath",
-            target_value: RegistryKeyValue::String(
-                std::env::current_dir()
-                    .unwrap()
-                    .join(WINRING0_SYS)
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-            ),
-            default_value: None,
-        },
-    ]
-});
 
 static DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY: Lazy<Vec<RegistryModification>> = Lazy::new(
     || {
@@ -68,20 +26,20 @@ static DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY: Lazy<Vec<RegistryModification
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "WasEnabledBy",
-                target_value: RegistryKeyValue::Dword(1),
-                default_value: None,
+                enabled: RegistryKeyValue::Dword(1),
+                disabled: None,
             },
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "Enabled",
-                target_value: RegistryKeyValue::Dword(0),
-                default_value: Some(RegistryKeyValue::Dword(1)),
+                enabled: RegistryKeyValue::Dword(0),
+                disabled: Some(RegistryKeyValue::Dword(1)),
             },
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "EnabledBootId",
-                target_value: RegistryKeyValue::Dword(0),
-                default_value: Some(RegistryKeyValue::Dword(1)),
+                enabled: RegistryKeyValue::Dword(0),
+                disabled: Some(RegistryKeyValue::Dword(1)),
             },
         ]
     },
@@ -91,8 +49,8 @@ static DISABLE_VULNERABLE_DRIVER_BLOCKLIST: Lazy<Vec<RegistryModification>> = La
     vec![RegistryModification {
         path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\CI\Config",
         key: "VulnerableDriverBlocklistEnable",
-        target_value: RegistryKeyValue::Dword(0),
-        default_value: Some(RegistryKeyValue::Dword(1)),
+        enabled: RegistryKeyValue::Dword(0),
+        disabled: Some(RegistryKeyValue::Dword(1)),
     }]
 });
 
@@ -182,11 +140,7 @@ impl WinRing0 {
         let mut eax: u32 = 0;
         let mut edx: u32 = 0;
         let affinity_mask = 1u64 << core_id;
-        let result = unsafe {
-            let x = (self.read_msr)(index, &mut eax, &mut edx, affinity_mask);
-
-            x
-        };
+        let result = unsafe { (self.read_msr)(index, &mut eax, &mut edx, affinity_mask) };
 
         match result.as_bool() {
             true => Ok(((edx as u64) << 32) | eax as u64),
@@ -223,193 +177,40 @@ impl Drop for WinRing0 {
     }
 }
 
-/// Verifies that the WinRing0x64 driver and related registry configurations are properly set up.
-pub fn verify_winring0_setup() -> anyhow::Result<()> {
+// Modify the setup_winring0_service function
+pub fn setup_winring0_driver() -> anyhow::Result<()> {
     // 1. Check that the WinRing0 DLL is in the current directory
-    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-    let winring0_dll_path = current_dir.join(WINRING0_DLL);
+    let winring0_dll_path = std::env::current_dir().unwrap().join(WINRING0_DLL);
     if !winring0_dll_path.exists() {
         return Err(anyhow::anyhow!(
-            "WinRing0 DLL not found at {:?}",
+            "WinRing0 DLL not found in current directory: {:?}",
             winring0_dll_path
         ));
-    }
-
-    // 2. Check that the WinRing0x64 service is running
-    match is_service_running(SERVICE_NAME) {
-        Ok(true) => {
-            tracing::debug!("WinRing0x64 service is running.");
-        }
-        Ok(false) => {
-            return Err(anyhow::anyhow!(
-                "WinRing0x64 service is not running. Please ensure the service is started."
-            ));
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to check if WinRing0x64 service is running: {}",
-                e
-            ));
-        }
-    }
-
-    // 3. Verify the 'VulnerableDriverBlocklistEnable' registry settings
-    for modification in DISABLE_VULNERABLE_DRIVER_BLOCKLIST.iter() {
-        match read_registry_value(&modification.path, modification.key) {
-            Ok(Some(value)) if value == modification.target_value => {
-                tracing::debug!(
-                    "Registry value '{}' in '{}' is set to {:?}",
-                    modification.key,
-                    modification.path,
-                    value
-                );
-            }
-            Ok(Some(value)) => {
-                return Err(anyhow::anyhow!(
-                    "Registry value '{}' in '{}' is set to {:?}. Expected {:?}",
-                    modification.key,
-                    modification.path,
-                    value,
-                    modification.target_value
-                ));
-            }
-            Ok(None) => {
-                return Err(anyhow::anyhow!(
-                    "Registry value '{}' in '{}' not found. Expected {:?}",
-                    modification.key,
-                    modification.path,
-                    modification.target_value
-                ));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to read registry value '{}' in '{}': {}",
-                    modification.key,
-                    modification.path,
-                    e
-                ));
-            }
-        }
-    }
-
-    // 4. Verify the 'HypervisorEnforcedCodeIntegrity' registry settings
-    for modification in DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY.iter() {
-        match read_registry_value(&modification.path, modification.key) {
-            Ok(Some(value)) if value == modification.target_value => {
-                tracing::debug!(
-                    "Registry value '{}' in '{}' is set to {:?}",
-                    modification.key,
-                    modification.path,
-                    value
-                );
-            }
-            Ok(Some(value)) => {
-                return Err(anyhow::anyhow!(
-                    "Registry value '{}' in '{}' is set to {:?}. Expected {:?}",
-                    modification.key,
-                    modification.path,
-                    value,
-                    modification.target_value
-                ));
-            }
-            Ok(None) => {
-                return Err(anyhow::anyhow!(
-                    "Registry value '{}' in '{}' not found. Expected {:?}",
-                    modification.key,
-                    modification.path,
-                    modification.target_value
-                ));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to read registry value '{}' in '{}': {}",
-                    modification.key,
-                    modification.path,
-                    e
-                ));
-            }
-        }
-    }
-
-    tracing::debug!("WinRing0x64 driver correctly configured.");
-    Ok(())
-}
-
-/// Sets up the WinRing0x64 service by creating/modifying the necessary registry entries.
-/// This includes additional configurations for Code Integrity and Device Guard.
-pub fn setup_winring0_service() -> anyhow::Result<()> {
-    // Check that the WinRing0 DLL is in the current directory
-    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-    let winring0_dll_path = current_dir.join(WINRING0_DLL);
-    if !winring0_dll_path.exists() {
-        return Err(anyhow::anyhow!(
-            "WinRing0 DLL not found at {:?}",
-            winring0_dll_path
-        ));
-    }
-
-    // Check that the WinRing0.sys is in the current directory
-    let winring0_sys_path = current_dir.join(WINRING0_SYS);
-    if !winring0_sys_path.exists() {
-        return Err(anyhow::anyhow!(
-            "WinRing0.sys not found at {:?}",
-            winring0_sys_path
-        ));
-    }
-
-    // Create/modify the registry entries for the WinRing0x64 service
-    for modification in WINRING0_SERVICE.iter() {
-        create_or_modify_registry_value(
-            &modification.path,
-            modification.key,
-            &modification.target_value,
-        )?;
     }
 
     // Create/modify the registry entries for disabling the Vulnerable Driver Blocklist
     for modification in DISABLE_VULNERABLE_DRIVER_BLOCKLIST.iter() {
-        create_or_modify_registry_value(
-            &modification.path,
+        if let Err(e) = create_or_modify_registry_value(
+            modification.path,
             modification.key,
-            &modification.target_value,
-        )?;
-    }
-
-    // Create/modify the registry entries for disabling Hypervisor Enforced Code Integrity
-    for modification in DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY.iter() {
-        create_or_modify_registry_value(
-            &modification.path,
-            modification.key,
-            &modification.target_value,
-        )?;
-    }
-
-    // Start the WinRing0x64 service
-    match start_service(SERVICE_NAME) {
-        Ok(_) => {
-            tracing::debug!("WinRing0x64 service started successfully.");
-        }
-        Err(e) => {
+            &modification.enabled,
+        ) {
             return Err(anyhow::anyhow!(
-                "Failed to start WinRing0x64 service: {}",
+                "Failed to create or modify registry value: {:?}",
                 e
             ));
         }
     }
 
-    // Check that the WinRing0x64 service is running
-    match is_service_running(SERVICE_NAME) {
-        Ok(true) => {
-            tracing::debug!("WinRing0x64 service is running.");
-        }
-        Ok(false) => {
+    // Create/modify the registry entries for disabling Hypervisor Enforced Code Integrity
+    for modification in DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY.iter() {
+        if let Err(e) = create_or_modify_registry_value(
+            modification.path,
+            modification.key,
+            &modification.enabled,
+        ) {
             return Err(anyhow::anyhow!(
-                "WinRing0x64 service is not running. Please ensure the service is started."
-            ));
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to check if WinRing0x64 service is running: {}",
+                "Failed to create or modify registry value: {:?}",
                 e
             ));
         }

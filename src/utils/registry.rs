@@ -661,7 +661,7 @@ mod tests {
             .expect("Failed to set temporary value");
 
         // Ensure 'NonExistentValue' does not exist
-        let _ = delete_registry_value(&path, key_name)
+        delete_registry_value(&path, key_name)
             .expect("Failed to delete 'NonExistentValue' (if it exists)");
 
         // Attempt to read the non-existent value, expecting Ok(None)

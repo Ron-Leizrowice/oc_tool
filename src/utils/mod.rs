@@ -1,5 +1,6 @@
-pub(crate) mod powershell;
-pub(crate) mod registry;
-pub(crate) mod services;
-pub(crate) mod windows;
-pub(crate) mod winring0;
+pub mod cpu;
+pub mod powershell;
+pub mod registry;
+pub mod services;
+pub mod windows;
+pub mod winring0;

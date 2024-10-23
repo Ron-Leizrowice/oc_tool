@@ -58,7 +58,7 @@ pub fn is_elevated() -> bool {
 /// - `Err(anyhow::Error)` if there was an error executing the reboot command.
 pub fn reboot_system() -> AnyResult<()> {
     // For Windows, use the 'shutdown' command with '/r' flag to reboot
-    execute_powershell_script("Restart-Computer -Force -Confirm:$false")?;
+    execute_powershell_script("shutdown /r /t 0")?;
 
     Ok(())
 }
@@ -67,7 +67,7 @@ pub fn reboot_system() -> AnyResult<()> {
 /// Requires administrator privileges.
 /// Note: This command works on Windows 10 and later.
 pub fn reboot_into_bios() -> AnyResult<()> {
-    execute_powershell_script("Restart-Computer -Force -Firmware")?;
+    execute_powershell_script("shutdown /r /fw /t 0")?;
     Ok(())
 }
 

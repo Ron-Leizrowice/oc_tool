@@ -16,7 +16,7 @@ use ultimate_performance_plan::UltimatePerformancePlan;
 
 use crate::{
     tweaks::{Tweak, TweakCategory, TweakId},
-    widgets::TweakWidget,
+    ui::TweakWidget,
 };
 
 pub fn all_winapi_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {

@@ -19,6 +19,7 @@ use windows::{
 /// - `Ok(true)` if the service is running.
 /// - `Ok(false)` if the service is not running.
 /// - `Err(anyhow::Error)` if an error occurs while querying the service.
+#[allow(dead_code)]
 pub fn is_service_running(service_name: &str) -> anyhow::Result<bool> {
     unsafe {
         // Open the Service Control Manager
@@ -101,6 +102,7 @@ pub fn is_service_running(service_name: &str) -> anyhow::Result<bool> {
 /// # Returns
 /// - `Ok(())` if the service was successfully started.
 /// - `Err(anyhow::Error)` if an error occurs while starting the service.
+#[allow(dead_code)]
 pub fn start_service(service_name: &str) -> anyhow::Result<()> {
     unsafe {
         // Open the Service Control Manager

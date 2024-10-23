@@ -13,11 +13,12 @@ use group_policy::{all_group_policy_tweaks, method::GroupPolicyTweak};
 use msr::{all_msr_tweaks, method::MSRTweak};
 use powershell::{all_powershell_tweaks, method::PowershellTweak};
 use registry::{all_registry_tweaks, method::RegistryTweak};
+use strum_macros::EnumIter;
 use winapi::all_winapi_tweaks;
 
-use crate::widgets::TweakWidget;
+use crate::ui::TweakWidget;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum TweakId {
     LargeSystemCache,
     SystemResponsiveness,
@@ -35,6 +36,8 @@ pub enum TweakId {
     DisableRamCompression,
     DisableApplicationTelemetry,
     DisableWindowsErrorReporting,
+    DisableTlbCache,
+    DisableMcaStatusWriteEnable,
     DisableLocalFirewall,
     DontVerifyRandomDrivers,
     DisableDriverPaging,
@@ -43,7 +46,7 @@ pub enum TweakId {
     ThreadDpcDisable,
     SvcHostSplitThreshold,
     DisablePagefile,
-    DisableSpeculativeExecutionMitigations,
+    SpeculativeExecutionMitigations,
     DisableDataExecutionPrevention,
     DisableWindowsDefender,
     DisablePageFileEncryption,
@@ -68,11 +71,8 @@ pub enum TweakId {
     SelectiveBranchPredictorBarrier,
     IndirectBranchPredictionBarrier,
     AutomaticIbrsEnable,
-    UpperAddressIgnoreEnable,
-    TranslationCacheExtensionEnable,
-    FastFxsaveFrstorEnable,
+    EnableUpperAddressIgnore,
     DisableSecureVirtualMachine,
-    DisableNoExecutePage,
     DowngradeFp512ToFp256,
     DisableRsmSpecialBusCycle,
     DisableSmiSpecialBusCycle,
@@ -84,14 +84,30 @@ pub enum TweakId {
     DisableL1RegionPrefetcher,
     DisableL1StreamPrefetcher,
     DisableL1StridePrefetcher,
-    DisableHostMultiKeyEncryption,
-    DisableSecureNestedPaging,
-    EnableTopOfMemory2MemoryTypeWriteBack,
-    DisableSecureMemoryEncryption,
     EnableMtrrFixedDramAttributes,
     EnableMtrrFixedDramModification,
     EnableMtrrTopOfMemory2,
     EnableMtrrVariableDram,
+    EnableTranslationCacheExtension,
+    EnableFastFxsaveFrstor,
+    EnableTom2WriteBack,
+    DisbleControlFlowEnforcement,
+    EnableInterruptibleWbinvd,
+    EnableInvdToWbinvdConversion,
+    EnableL3CodeDataPrioritization,
+    DisableStreamingStores,
+    DisableRedirectForReturn,
+    DisableGlobalCStates,
+    DisableOpCache,
+    SpeculativeStoreModes,
+    DisableMonitorMonitorAndMwait,
+    DisableAvx512,
+    DisableFastShortRepMovsb,
+    DisableEnhancedRepMovsbStosb,
+    DisableRepMovStosStreaming,
+    DisablePss,
+    DisableCoreWatchdogTimer,
+    DisablePlatformFirstErrorHandling,
 }
 
 pub fn all_tweaks<'a>() -> BTreeMap<TweakId, Tweak<'a>> {
@@ -159,10 +175,10 @@ pub enum TweakStatus {
     Idle,
     Applying,
     Reverting,
-    Failed(Error),
+    Failed(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum TweakCategory {
     Action,
     Cpu,
@@ -313,5 +329,22 @@ impl<'a> Tweak<'a> {
 
     pub fn revert(&self) -> Result<(), anyhow::Error> {
         self.method.revert()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator;
+
+    use super::*;
+
+    #[test]
+    fn verify_every_tweak_id_is_used() {
+        let all_tweaks = all_tweaks();
+        let all_ids = TweakId::iter().collect::<Vec<_>>();
+
+        for id in all_ids {
+            assert!(all_tweaks.contains_key(&id), "TweakId {:?} is not used", id);
+        }
     }
 }

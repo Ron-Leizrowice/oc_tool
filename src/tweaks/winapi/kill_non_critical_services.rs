@@ -21,7 +21,7 @@ use windows::{
 
 use crate::tweaks::{TweakId, TweakMethod};
 
-const SERVICES_TO_KILL: &[&str; 106] = &[
+const SERVICES_TO_KILL: &[&str; 102] = &[
     "AdobeARMservice",            // Adobe Acrobat Update Service
     "AdobeFlashPlayerUpdateSvc",  // Adobe Flash Player Update Service
     "AdobeUpdateService",         // Adobe Update Service
@@ -57,7 +57,6 @@ const SERVICES_TO_KILL: &[&str; 106] = &[
     "DevicesFlowUserSvc", // Allows ConnectUX and PC Settings to Connect and Pair with WiFi displays and Bluetooth devices.
     "diagnosticshub",     // Microsoft (R) Diagnostics Hub Standard Collector Service
     "DispBrokerDesktopSvc", // Display Policy Service
-    "Dhcp",               // DHCP Client
     "Dnscache",           // DNS Client
     "DPS",                // Diagnostic Policy Service
     "DsmSvc",             //
@@ -88,11 +87,9 @@ const SERVICES_TO_KILL: &[&str; 106] = &[
     "MSiSCSI",            // Microsoft iSCSI Initiator Service
     "NaturalAuthentication", // Natural Authentication
     "NcbService",         // Network Connection Broker
-    "netprofm",           // Network List Service
     "NgcCtnrSvc",         // Microsoft Passport Container
     "NgcSvc",             // Microsoft Passport
     "NPSMSvc",            // Now Playing Media Service
-    "nsi",                // Network Store Interface Service
     "NVDisplay",          // NVIDIA Display Driver Service
     "OneSyncSvc",         // Synchronizes mail, contacts, calendar etc.
     "PcaSvc",             // Program Compatibility Assistant Service
@@ -103,7 +100,6 @@ const SERVICES_TO_KILL: &[&str; 106] = &[
     "PolicyAgent",        // IPsec Policy Agent
     "PrintNotify",        // Printer Extensions and Notifications
     "RasMan",             // Remote Access Connection Manager
-    "RmSvc",              // Radio Management Service
     "RtkAudioUniversalService", // Realtek Audio Universal Service
     "SCardSvr",           // Smart Card
     "ScDeviceEnum",       // Smart Card Device Enumeration Service

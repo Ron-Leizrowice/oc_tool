@@ -21,6 +21,7 @@ pub struct RegistryTweak<'a> {
 }
 
 /// Represents a single registry modification, including the registry key, value name, desired value, and default value.
+///
 /// If `default_value` is `None`, the modification is considered enabled if the registry value exists.
 /// Reverting such a tweak involves deleting the registry value.
 #[derive(Debug, Clone)]
@@ -30,10 +31,10 @@ pub struct RegistryModification<'a> {
     /// Name of the registry value to modify.
     pub key: &'a str,
     /// The value to set when applying the tweak.
-    pub target_value: RegistryKeyValue,
+    pub enabled: RegistryKeyValue,
     /// The default value to revert to when undoing the tweak.
     /// If `None`, reverting deletes the registry value.
-    pub default_value: Option<RegistryKeyValue>,
+    pub disabled: Option<RegistryKeyValue>,
 }
 
 impl RegistryTweak<'_> {
@@ -139,19 +140,19 @@ impl TweakMethod for RegistryTweak<'_> {
         debug!("{:?} -> Determining if registry tweak is enabled.", self.id);
 
         for modification in &self.modifications {
-            if modification.default_value.is_some() {
+            if modification.disabled.is_some() {
                 // For modifications with a default value, compare the current value with the target value
                 match read_registry_value(modification.path, modification.key)? {
-                    Some(current_val) if current_val == modification.target_value => {
+                    Some(current_val) if current_val == modification.enabled => {
                         debug!(
                             "{:?} -> Modification '{}' is enabled. Value matches {:?}.",
-                            self.id, modification.key, modification.target_value
+                            self.id, modification.key, modification.enabled
                         );
                     }
                     Some(current_val) => {
                         debug!(
                             "{:?} -> Modification '{}' is disabled. Expected {:?}, found {:?}.",
-                            self.id, modification.key, modification.target_value, current_val
+                            self.id, modification.key, modification.enabled, current_val
                         );
                         return Ok(false);
                     }
@@ -209,7 +210,7 @@ impl TweakMethod for RegistryTweak<'_> {
                 create_or_modify_registry_value(
                     modification.path,
                     modification.key,
-                    &modification.target_value,
+                    &modification.enabled,
                 )
                 .with_context(|| {
                     format!(
@@ -220,7 +221,7 @@ impl TweakMethod for RegistryTweak<'_> {
 
                 debug!(
                     "{:?} -> Set value '{}' to {:?} in '{}'.",
-                    self.id, modification.key, modification.target_value, modification.path
+                    self.id, modification.key, modification.enabled, modification.path
                 );
 
                 // Record the successfully applied modification along with its original value
@@ -282,7 +283,7 @@ impl TweakMethod for RegistryTweak<'_> {
                     })?;
 
                 // Revert the modification using helper functions
-                match &modification.default_value {
+                match &modification.disabled {
                     Some(default_val) => {
                         // Restore the default value
                         create_or_modify_registry_value(

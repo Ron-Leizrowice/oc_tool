@@ -1,30 +1,10 @@
 // src/tweaks/msr.rs
 
-use once_cell::sync::Lazy;
-
 use crate::{
     tweaks::{TweakId, TweakMethod},
-    utils::winring0::WINRING0_DRIVER,
+    utils::{cpu::CPU_INFO, winring0::WINRING0_DRIVER},
 };
 
-#[derive(Debug, Clone, Copy)]
-pub struct CpuInfo {
-    pub cores: usize,
-    pub _threads: usize,
-}
-
-impl CpuInfo {
-    pub fn new() -> Self {
-        CpuInfo {
-            cores: num_cpus::get(),
-            _threads: num_cpus::get_physical(),
-        }
-    }
-}
-
-static CPU_INFO: Lazy<CpuInfo> = Lazy::new(CpuInfo::new);
-
-// Ensure MSRTweak implements Clone
 pub struct MSRTweak {
     pub id: TweakId,
     pub readable: bool,
@@ -35,6 +15,34 @@ pub struct MsrTweakState {
     pub index: u32,
     pub bit: u32,
     pub state: bool, // whether to set 1 (true) or 0 (false) when enabling the tweak
+}
+
+impl MSRTweak {
+    /// Creates a set mask by OR-ing all bits that need to be set.
+    fn create_set_mask(steps: &[&MsrTweakState]) -> u64 {
+        steps
+            .iter()
+            .filter(|s| s.state)
+            .fold(0, |acc, s| acc | (1 << s.bit))
+    }
+
+    /// Creates a clear mask by OR-ing all bits that need to be cleared.
+    fn create_clear_mask(steps: &[&MsrTweakState]) -> u64 {
+        steps
+            .iter()
+            .filter(|s| !s.state)
+            .fold(0, |acc, s| acc | (1 << s.bit))
+    }
+
+    /// Applies the set and clear masks to the current value.
+    fn apply_masks(current_value: u64, set_mask: u64, clear_mask: u64) -> u64 {
+        (current_value | set_mask) & !clear_mask
+    }
+
+    /// Reverts the set and clear masks to the expected value.
+    fn revert_masks(current_value: u64, set_mask: u64, clear_mask: u64) -> u64 {
+        (current_value | set_mask) & !clear_mask
+    }
 }
 
 impl TweakMethod for MSRTweak {
@@ -50,7 +58,7 @@ impl TweakMethod for MSRTweak {
         // Lock the WinRing0 driver to prevent concurrent access
         let winring0 = WINRING0_DRIVER
             .lock()
-            .map_err(|_| anyhow::anyhow!("Failed to lock WinRing0"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to lock WinRing0: {:?}", e))?;
 
         let mut all_states = Vec::with_capacity(self.msrs.len());
 
@@ -88,40 +96,47 @@ impl TweakMethod for MSRTweak {
             .lock()
             .map_err(|_| anyhow::anyhow!("Failed to lock WinRing0"))?;
 
+        // Group MsrTweakState by MSR index
+        let mut msr_groups: std::collections::HashMap<u32, Vec<&MsrTweakState>> =
+            std::collections::HashMap::new();
         for step in &self.msrs {
-            for core_id in 0..CPU_INFO.cores {
-                let current_value = winring0.read_msr(core_id, step.index)?;
-                let new_value = if step.state {
-                    current_value | (1 << step.bit) // Set bit
-                } else {
-                    current_value & !(1 << step.bit) // Clear bit
-                };
-                winring0.write_msr(core_id, step.index, new_value)?;
+            msr_groups.entry(step.index).or_default().push(step);
+        }
 
-                // Verify the bit is set or cleared as desired
-                let updated_value = winring0.read_msr(core_id, step.index)?;
-                let state = ((updated_value >> step.bit) & 1) == if step.state { 1 } else { 0 };
-                if !state {
+        for (msr_index, steps) in msr_groups {
+            for core_id in 0..CPU_INFO.cores {
+                // Read current MSR value
+                let current_value = winring0.read_msr(core_id, msr_index)?;
+
+                // Create masks
+                let set_mask = MSRTweak::create_set_mask(&steps);
+                let clear_mask = MSRTweak::create_clear_mask(&steps);
+
+                // Apply masks
+                let new_value = MSRTweak::apply_masks(current_value, set_mask, clear_mask);
+
+                // Write back the modified MSR value
+                winring0.write_msr(core_id, msr_index, new_value)?;
+
+                // Verify the changes
+                let updated_value = winring0.read_msr(core_id, msr_index)?;
+                if updated_value != new_value {
                     tracing::error!(
-                        "Failed to set MSR 0x{:X} bit {} on core {}",
-                        step.index,
-                        step.bit,
-                        core_id
+                        "Failed to apply MSR 0x{:X} on core {}. Expected: 0x{:016X}, Got: 0x{:016X}",
+                        msr_index,
+                        core_id,
+                        new_value,
+                        updated_value
                     );
                     return Err(anyhow::anyhow!(
-                        "Failed to set MSR 0x{:X} bit {} on core {}",
-                        step.index,
-                        step.bit,
+                        "Failed to apply MSR 0x{:X} on core {}",
+                        msr_index,
                         core_id
                     ));
                 }
             }
 
-            tracing::info!(
-                "Successfully applied MSR 0x{:X} bit {} on all cores.",
-                step.index,
-                step.bit,
-            );
+            tracing::info!("Successfully applied MSR 0x{:X} on all cores.", msr_index);
         }
 
         Ok(())
@@ -129,45 +144,51 @@ impl TweakMethod for MSRTweak {
 
     /// Reverts all MSR tweaks by resetting the specified bits to their original state.
     fn revert(&self) -> std::result::Result<(), anyhow::Error> {
-        // Lock the WinRing0 driver to prevent concurrent access
         let winring0 = WINRING0_DRIVER
             .lock()
             .map_err(|_| anyhow::anyhow!("Failed to lock WinRing0"))?;
 
+        // Group MsrTweakState by MSR index
+        let mut msr_groups: std::collections::HashMap<u32, Vec<&MsrTweakState>> =
+            std::collections::HashMap::new();
         for step in &self.msrs {
-            for core_id in 0..CPU_INFO.cores {
-                let current_value = winring0.read_msr(core_id, step.index)?;
-                let new_value = if step.state {
-                    current_value & !(1 << step.bit) // Clear bit
-                } else {
-                    current_value | (1 << step.bit) // Set bit
-                };
-                winring0.write_msr(core_id, step.index, new_value)?;
+            msr_groups.entry(step.index).or_default().push(step);
+        }
 
-                // Verify the bit is reverted as desired
-                let updated_value = winring0.read_msr(core_id, step.index)?;
-                let state = ((updated_value >> step.bit) & 1) == if step.state { 0 } else { 1 };
-                if !state {
+        for (msr_index, steps) in msr_groups {
+            for core_id in 0..CPU_INFO.cores {
+                // Read current MSR value
+                let current_value = winring0.read_msr(core_id, msr_index)?;
+
+                // To revert, invert the set and clear masks
+                let set_mask = MSRTweak::create_clear_mask(&steps);
+                let clear_mask = MSRTweak::create_set_mask(&steps);
+
+                // Apply masks
+                let new_value = MSRTweak::revert_masks(current_value, set_mask, clear_mask);
+
+                // Write back the modified MSR value
+                winring0.write_msr(core_id, msr_index, new_value)?;
+
+                // Verify the changes
+                let updated_value = winring0.read_msr(core_id, msr_index)?;
+                if updated_value != new_value {
                     tracing::error!(
-                        "Failed to revert MSR 0x{:X} bit {} on core {}",
-                        step.index,
-                        step.bit,
-                        core_id
+                        "Failed to revert MSR 0x{:X} on core {}. Expected: 0x{:016X}, Got: 0x{:016X}",
+                        msr_index,
+                        core_id,
+                        new_value,
+                        updated_value
                     );
                     return Err(anyhow::anyhow!(
-                        "Failed to revert MSR 0x{:X} bit {} on core {}",
-                        step.index,
-                        step.bit,
+                        "Failed to revert MSR 0x{:X} on core {}",
+                        msr_index,
                         core_id
                     ));
                 }
             }
 
-            tracing::info!(
-                "Successfully reverted MSR 0x{:X} bit {} on all cores.",
-                step.index,
-                step.bit,
-            );
+            tracing::info!("Successfully reverted MSR 0x{:X} on all cores.", msr_index);
         }
 
         Ok(())

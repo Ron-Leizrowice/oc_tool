@@ -1,4 +1,4 @@
-// src/widgets/button.rs
+// src/ui/button.rs
 
 use eframe::egui::{FontId, Response, Rounding, Sense, Ui};
 use egui::{vec2, Vec2};
