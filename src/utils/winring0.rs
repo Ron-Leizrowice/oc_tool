@@ -58,11 +58,15 @@ static INITIALIZE_OLS: &CStr = cstr!("InitializeOls");
 static DEINITIALIZE_OLS: &CStr = cstr!("DeinitializeOls");
 static WRMSRTX: &CStr = cstr!("WrmsrTx");
 static RDMSRTX: &CStr = cstr!("RdmsrTx");
+static READ_PCI_CONFIG_LOCAL: &CStr = cstr!("ReadPciConfigDwordEx");
+static WRITE_PCI_CONFIG_LOCAL: &CStr = cstr!("WritePciConfigDwordEx");
 
 type InitializeOls = unsafe extern "system" fn() -> BOOL;
 type DeinitializeOls = unsafe extern "system" fn();
 type ReadMsrTx = unsafe extern "system" fn(u32, *mut u32, *mut u32, u64) -> BOOL;
 type WriteMsrTx = unsafe extern "system" fn(u32, u32, u32, u64) -> BOOL;
+type ReadPciConfigDwordEx = unsafe extern "system" fn(u32, u32, *mut u32) -> BOOL;
+type WritePciConfigDwordEx = unsafe extern "system" fn(u32, u32, u32) -> BOOL;
 
 pub struct WinRing0 {
     _lib: HMODULE,
@@ -70,6 +74,8 @@ pub struct WinRing0 {
     deinitialize: DeinitializeOls,
     read_msr: ReadMsrTx,
     write_msr: WriteMsrTx,
+    read_pci_config: ReadPciConfigDwordEx,
+    write_pci_config: WritePciConfigDwordEx,
 }
 
 // Ensure WinRing0 is Send and Sync
@@ -111,6 +117,16 @@ impl WinRing0 {
                     .ok_or(Error::new(E_FAIL, "Failed to get WrmsrTx"))?,
             );
 
+            let read_pci_config: ReadPciConfigDwordEx = std::mem::transmute(
+                GetProcAddress(lib, PCSTR(READ_PCI_CONFIG_LOCAL.as_ptr() as *const u8))
+                    .ok_or(Error::new(E_FAIL, "Failed to get ReadPciConfigDwordEx"))?,
+            );
+
+            let write_pci_config: WritePciConfigDwordEx = std::mem::transmute(
+                GetProcAddress(lib, PCSTR(WRITE_PCI_CONFIG_LOCAL.as_ptr() as *const u8))
+                    .ok_or(Error::new(E_FAIL, "Failed to get WritePciConfigDwordEx"))?,
+            );
+
             // **Initialize WinRing0**
             let init_result = _initialize();
             if !init_result.as_bool() {
@@ -130,6 +146,8 @@ impl WinRing0 {
                 deinitialize,
                 read_msr,
                 write_msr,
+                read_pci_config,
+                write_pci_config,
             })
         }
     }
@@ -164,6 +182,37 @@ impl WinRing0 {
             false => Err(Error::new(
                 E_FAIL,
                 format!("Failed to write MSR 0x{:X} on core {}", index, core_id),
+            )),
+        }
+    }
+
+    pub fn read_pci_config(&self, reg: u32) -> windows::core::Result<u32> {
+        let mut value: u32 = 0;
+        // Read from device 0:0:0.0 (northbridge)
+        let pci_address = 0x00000000;
+
+        let result = unsafe { (self.read_pci_config)(pci_address, reg, &mut value) };
+
+        match result.as_bool() {
+            true => Ok(value),
+            false => Err(Error::new(
+                E_FAIL,
+                format!("Failed to read PCI config space at offset 0x{:X}", reg),
+            )),
+        }
+    }
+
+    pub fn write_pci_config(&self, reg: u32, value: u32) -> windows::core::Result<()> {
+        // Write to device 0:0:0.0 (northbridge)
+        let pci_address = 0x00000000;
+
+        let result = unsafe { (self.write_pci_config)(pci_address, reg, value) };
+
+        match result.as_bool() {
+            true => Ok(()),
+            false => Err(Error::new(
+                E_FAIL,
+                format!("Failed to write PCI config space at offset 0x{:X}", reg),
             )),
         }
     }

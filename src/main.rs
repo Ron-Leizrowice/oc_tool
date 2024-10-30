@@ -18,6 +18,7 @@ use oc_tool::{
         TweakWidget,
     },
     utils::{
+        smu::{SmuInterface, SmuType},
         windows::{is_elevated, reboot_into_bios, reboot_system},
         winring0::{setup_winring0_driver, WINRING0_DRIVER},
     },
@@ -36,7 +37,7 @@ pub struct MyApp {
 
     pub dialogs: Dialogs<'static>,
 
-    selected_category: Option<TweakCategory>,
+    _selected_category: Option<TweakCategory>,
 }
 
 impl MyApp {
@@ -107,7 +108,7 @@ impl MyApp {
             initial_states_loaded: false,
             pending_initial_state_reads,
             dialogs,
-            selected_category: Some(TweakCategory::System),
+            _selected_category: Some(TweakCategory::System),
         }
     }
 
@@ -473,6 +474,24 @@ impl MyApp {
                                             ));
                                         }
                                     }
+
+                                    if ui.add(Button::new("Read SMU Version")).clicked() {
+                                        match SmuInterface::new(SmuType::MP1) {
+                                            Ok(smu) => match smu.get_version() {
+                                                Ok(version) => {
+                                                    tracing::info!("SMU Version: {:?}", version)
+                                                }
+                                                Err(e) => tracing::error!(
+                                                    "Failed to get version: {:?}",
+                                                    e
+                                                ),
+                                            },
+                                            Err(e) => tracing::error!(
+                                                "Failed to initialize SMU interface: {:?}",
+                                                e
+                                            ),
+                                        }
+                                    }
                                 },
                             );
                         });
@@ -488,7 +507,8 @@ impl App for MyApp {
             if let Some(res) = self.dialogs.show(ctx) {
                 // handle reply from close confirmation dialog
                 if let Ok(StandardReply::Ok) = res.reply() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    tracing::debug!("Dialog closed by user.");
                 }
             }
         } else {
