@@ -1,6 +1,6 @@
 use std::mem::zeroed;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use tracing::info;
 use windows::{
     core::PCWSTR,
@@ -11,7 +11,7 @@ use windows::{
     },
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use crate::tweaks::{TweakId, TweakMethod, TweakOption};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplaySettingsType {
@@ -116,17 +116,17 @@ impl Default for LowResMode {
 }
 
 impl TweakMethod for LowResMode {
-    fn initial_state(&self) -> Result<bool, anyhow::Error> {
+    fn initial_state(&self) -> Result<TweakOption> {
         let current = get_display_settings();
         let current_state = current.last().unwrap();
         info!(
             "{:?} -> Initial state: Current display settings: {:?}",
             self.id, current_state
         );
-        Ok(current_state == &self.target_state)
+        Ok(TweakOption::Enabled(current_state == &self.target_state))
     }
 
-    fn apply(&self) -> Result<(), anyhow::Error> {
+    fn apply(&self, _option: TweakOption) -> Result<(), anyhow::Error> {
         let result = set_display_settings(self.target_state.clone());
         match result {
             DISP_CHANGE_SUCCESSFUL => Ok(()),
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_tweak_apply() {
         let tweak = LowResMode::default();
-        let result = tweak.apply();
+        let result = tweak.apply(TweakOption::Enabled(true));
         println!("{:?}", result);
     }
 

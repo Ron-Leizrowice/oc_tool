@@ -2,6 +2,7 @@
 
 use std::ptr;
 
+use indexmap::IndexMap;
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
@@ -18,24 +19,13 @@ use windows::{
 };
 
 use crate::{
-    tweaks::{TweakId, TweakMethod},
+    tweaks::{TweakId, TweakMethod, TweakOption},
     utils::windows::get_current_username,
 };
 
 /// Group Policy related constants.
 pub static POLICY_CREATE_ACCOUNT: u32 = 0x00000010;
 pub static POLICY_LOOKUP_NAMES: u32 = 0x00000800;
-
-/// Represents a Group Policy tweak, including the policy key and desired value.
-#[derive(Clone, Debug)]
-pub struct GroupPolicyTweak<'a> {
-    /// Unique ID
-    pub id: TweakId,
-    /// The policy key (e.g., "SeLockMemoryPrivilege").
-    pub key: &'a str,
-    /// The desired value for the policy.
-    pub value: GroupPolicyValue,
-}
 
 /// Enumeration of possible Group Policy values.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,14 +34,25 @@ pub enum GroupPolicyValue {
     Disabled,
 }
 
+/// Represents a Group Policy tweak, including the policy key and desired values for different options.
+#[derive(Debug)]
+pub struct GroupPolicyTweak<'a> {
+    /// Unique ID
+    pub id: TweakId,
+    /// The policy key (e.g., "SeLockMemoryPrivilege").
+    pub key: &'a str,
+    /// Mapping from TweakOption to desired GroupPolicyValue.
+    pub options: IndexMap<TweakOption, GroupPolicyValue>,
+}
+
 impl GroupPolicyTweak<'_> {
     /// Reads the current value of the Group Policy tweak.
     ///
     /// # Returns
     ///
     /// - `Ok(GroupPolicyValue)` indicating if the policy is enabled or disabled.
-    /// - `Err(GroupPolicyError)` if the operation fails.
-    pub fn read_current_value(&self) -> Result<GroupPolicyValue, anyhow::Error> {
+    /// - `Err(anyhow::Error)` if the operation fails.
+    fn read_current_value(&self) -> Result<GroupPolicyValue, anyhow::Error> {
         tracing::info!(
             "{:?} -> Reading current value of Group Policy tweak.",
             self.id,
@@ -227,7 +228,7 @@ impl GroupPolicyTweak<'_> {
     /// # Returns
     ///
     /// - `Ok(())` if the operation succeeds.
-    /// - `Err(GroupPolicyError)` if the operation fails.
+    /// - `Err(anyhow::Error)` if the operation fails.
     fn modify_user_rights(&self, privilege: &str, enable: bool) -> Result<(), anyhow::Error> {
         unsafe {
             let object_attributes = LSA_OBJECT_ATTRIBUTES::default();
@@ -360,30 +361,35 @@ impl GroupPolicyTweak<'_> {
 }
 
 impl TweakMethod for GroupPolicyTweak<'_> {
-    /// Checks if the tweak is currently enabled by comparing the current value to the desired value.
+    /// Checks the current state of the tweak and returns the corresponding TweakOption.
     ///
     /// # Returns
-    /// - `Ok(true)` if the tweak is enabled.
-    /// - `Ok(false)` if the tweak is disabled.
-    /// - `Err(GroupPolicyError)` if the operation fails.
-    fn initial_state(&self) -> Result<bool, anyhow::Error> {
+    /// - `Ok(TweakOption)` indicating the current state.
+    /// - `Err(anyhow::Error)` if the operation fails.
+    fn initial_state(&self) -> Result<TweakOption, anyhow::Error> {
         tracing::info!(
-            "{:?} -> Checking if Group Policy tweak is enabled.",
+            "{:?} -> Checking current state of Group Policy tweak.",
             self.id
         );
         match self.read_current_value() {
-            Ok(value) => {
-                let is_enabled = value == self.value;
+            Ok(current_value) => {
+                // Iterate through the value map to find which TweakOption matches the current GroupPolicyValue
+                for (option, policy_value) in &self.options {
+                    if &current_value == policy_value {
+                        tracing::info!("{:?} -> Current state matches {:?}.", self.id, option);
+                        return Ok(option.clone());
+                    }
+                }
+                // If no matching option is found, consider the tweak disabled
                 tracing::info!(
-                    "{:?} -> Group Policy tweak is {}.",
-                    self.id,
-                    if is_enabled { "enabled" } else { "disabled" }
-                );
-                Ok(is_enabled)
+                        "{:?} -> Current state does not match any custom options. Assuming tweak is disabled.",
+                        self.id
+                    );
+                Ok(TweakOption::Enabled(false))
             }
             Err(e) => {
                 tracing::error!(
-                    "{:?} -> Failed to check if Group Policy tweak is enabled: {:?}",
+                    "{:?} -> Failed to determine initial state: {:?}",
                     self.id,
                     e
                 );
@@ -392,51 +398,104 @@ impl TweakMethod for GroupPolicyTweak<'_> {
         }
     }
 
-    /// Applies the Group Policy tweak by assigning the specified privilege to the current user.
+    /// Applies the Group Policy tweak based on the selected TweakOption.
+    ///
+    /// # Parameters
+    ///
+    /// - `option`: The TweakOption to apply (Default or Custom).
     ///
     /// # Returns
     ///
     /// - `Ok(())` if the operation succeeds.
-    /// - `Err(GroupPolicyError)` if the operation fails.
-    fn apply(&self) -> Result<(), anyhow::Error> {
-        tracing::info!("{:?} -> Applying Group Policy tweak.", self.id);
-        // Assign the privilege to the current user
-        match self.modify_user_rights(self.key, true) {
-            Ok(_) => Ok(()),
-            Err(e) => {
+    /// - `Err(anyhow::Error)` if the operation fails.
+    fn apply(&self, option: TweakOption) -> Result<(), anyhow::Error> {
+        tracing::info!(
+            "{:?} -> Applying Group Policy tweak with option: {:?}",
+            self.id,
+            option
+        );
+        // Retrieve the desired GroupPolicyValue based on the provided TweakOption
+        let desired_value = match self.options.get(&option) {
+            Some(val) => val,
+            None => {
                 tracing::error!(
-                    "{:?} -> Failed to apply Group Policy tweak: {:?}",
+                    "{:?} -> No GroupPolicyValue found for the provided option: {:?}",
                     self.id,
-                    e
+                    option
                 );
-                Err(e)
+                return Err(anyhow::Error::msg(format!(
+                    "No GroupPolicyValue found for the provided option: {:?}",
+                    option
+                )));
             }
+        };
+
+        // Apply the desired value
+        match desired_value {
+            GroupPolicyValue::Enabled => self.modify_user_rights(self.key, true),
+            GroupPolicyValue::Disabled => self.modify_user_rights(self.key, false),
         }
+        .map_err(|e| {
+            tracing::error!(
+                "{:?} -> Failed to apply Group Policy tweak with option {:?}: {:?}",
+                self.id,
+                option,
+                e
+            );
+            e
+        })?;
+        tracing::info!(
+            "{:?} -> Successfully applied Group Policy tweak with option: {:?}",
+            self.id,
+            option
+        );
+        Ok(())
     }
 
-    /// Reverts the Group Policy tweak by removing the specified privilege from the current user.
+    /// Reverts the Group Policy tweak back to the Default option.
     ///
     /// # Returns
     ///
     /// - `Ok(())` if the operation succeeds.
-    /// - `Err(GroupPolicyError)` if the operation fails.
+    /// - `Err(anyhow::Error)` if the operation fails.
     fn revert(&self) -> Result<(), anyhow::Error> {
-        tracing::info!("{:?} -> Reverting Group Policy tweak.", self.id);
-        // Remove the privilege from the current user
-        match self.modify_user_rights(self.key, false) {
-            Ok(_) => Ok(()),
-            Err(e) => {
+        tracing::info!("{:?} -> Reverting Group Policy tweak to Default.", self.id);
+        // Retrieve the default GroupPolicyValue
+        let default_value = match self.options.get(&TweakOption::Enabled(false)) {
+            Some(val) => val,
+            None => {
                 tracing::error!(
-                    "{:?} -> Failed to revert Group Policy tweak: {:?}",
-                    self.id,
-                    e
+                    "{:?} -> No GroupPolicyValue found for the Default option.",
+                    self.id
                 );
-                Err(e)
+                return Err(anyhow::Error::msg(
+                    "No GroupPolicyValue found for the Default option.",
+                ));
             }
+        };
+
+        // Apply the default value
+        match default_value {
+            GroupPolicyValue::Enabled => self.modify_user_rights(self.key, true),
+            GroupPolicyValue::Disabled => self.modify_user_rights(self.key, false),
         }
+        .map_err(|e| {
+            tracing::error!(
+                "{:?} -> Failed to revert Group Policy tweak to Default: {:?}",
+                self.id,
+                e
+            );
+            e
+        })?;
+        tracing::info!(
+            "{:?} -> Successfully reverted Group Policy tweak to Default.",
+            self.id
+        );
+        Ok(())
     }
 }
 
+/// Guard to ensure the LSA_HANDLE is properly closed.
 pub struct LsaHandleGuard {
     pub handle: LSA_HANDLE,
 }

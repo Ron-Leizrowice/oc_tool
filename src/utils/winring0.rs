@@ -14,8 +14,17 @@ use windows::{
 
 use crate::{
     tweaks::registry::method::RegistryModification,
-    utils::registry::{create_or_modify_registry_value, RegistryKeyValue},
+    utils::registry::{create_or_modify_registry_value, read_registry_value, RegistryKeyValue},
 };
+
+pub const WINRING0_SETUP_USER_MESSAGE: &str = "
+This app relies on the WinRing0 driver, which requires the following setup steps:\n\
+\n\
+1. Disabling the Vulnerable Driver Blocklist\n\
+2. Disabling Hypervisor Enforced Code Integrity\n\
+\n\
+Please confirm that you are willing to allow the app to make these changes to your system.
+";
 
 // Define constants
 const WINRING0_DLL: &str = "WinRing0x64.dll";
@@ -26,20 +35,17 @@ static DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY: Lazy<Vec<RegistryModification
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "WasEnabledBy",
-                enabled: RegistryKeyValue::Dword(1),
-                disabled: None,
+                value: RegistryKeyValue::Dword(1),
             },
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "Enabled",
-                enabled: RegistryKeyValue::Dword(0),
-                disabled: Some(RegistryKeyValue::Dword(1)),
+                value: RegistryKeyValue::Dword(0),
             },
             RegistryModification {
                 path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                 key: "EnabledBootId",
-                enabled: RegistryKeyValue::Dword(0),
-                disabled: Some(RegistryKeyValue::Dword(1)),
+                value: RegistryKeyValue::Dword(0),
             },
         ]
     },
@@ -49,8 +55,7 @@ static DISABLE_VULNERABLE_DRIVER_BLOCKLIST: Lazy<Vec<RegistryModification>> = La
     vec![RegistryModification {
         path: r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\CI\Config",
         key: "VulnerableDriverBlocklistEnable",
-        enabled: RegistryKeyValue::Dword(0),
-        disabled: Some(RegistryKeyValue::Dword(1)),
+        value: RegistryKeyValue::Dword(0),
     }]
 });
 
@@ -152,7 +157,7 @@ impl WinRing0 {
         }
     }
 
-    /// Reads the MSR for a specific core.
+    /// Reads the MSR for a specific core
     pub fn read_msr(&self, core_id: usize, index: u32) -> windows::core::Result<u64> {
         // Perform the MSR read operation
         let mut eax: u32 = 0;
@@ -160,16 +165,21 @@ impl WinRing0 {
         let affinity_mask = 1u64 << core_id;
         let result = unsafe { (self.read_msr)(index, &mut eax, &mut edx, affinity_mask) };
 
-        match result.as_bool() {
-            true => Ok(((edx as u64) << 32) | eax as u64),
-            false => Err(Error::new(
+        if result.as_bool() {
+            Ok(((edx as u64) << 32) | eax as u64)
+        } else {
+            let error_code = unsafe { GetLastError() };
+            Err(Error::new(
                 E_FAIL,
-                format!("Failed to read MSR 0x{:X} on core {}", index, core_id),
-            )),
+                format!(
+                    "Failed to read MSR 0x{:X} on core {}. GetLastError: {}",
+                    index, core_id, error_code.0
+                ),
+            ))
         }
     }
 
-    /// Writes to the MSR for a specific core.
+    /// Writes to the MSR for a specific core
     pub fn write_msr(&self, core_id: usize, index: u32, value: u64) -> windows::core::Result<()> {
         // Perform the MSR write operation
         let eax = (value & 0xFFFFFFFF) as u32;
@@ -177,53 +187,115 @@ impl WinRing0 {
         let affinity_mask = 1u64 << core_id;
         let result = unsafe { (self.write_msr)(index, eax, edx, affinity_mask) };
 
-        match result.as_bool() {
-            true => Ok(()),
-            false => Err(Error::new(
+        if result.as_bool() {
+            Ok(())
+        } else {
+            let error_code = unsafe { GetLastError() };
+            Err(Error::new(
                 E_FAIL,
-                format!("Failed to write MSR 0x{:X} on core {}", index, core_id),
-            )),
+                format!(
+                    "Failed to write MSR 0x{:X} on core {}. GetLastError: {}",
+                    index, core_id, error_code.0
+                ),
+            ))
         }
     }
 
-    pub fn read_pci_config(&self, reg: u32) -> windows::core::Result<u32> {
-        let mut value: u32 = 0;
-        // Read from device 0:0:0.0 (northbridge)
-        let pci_address = 0x00000000;
-
-        let result = unsafe { (self.read_pci_config)(pci_address, reg, &mut value) };
-
-        match result.as_bool() {
-            true => Ok(value),
-            false => Err(Error::new(
-                E_FAIL,
-                format!("Failed to read PCI config space at offset 0x{:X}", reg),
-            )),
+    /// Reads a PCI configuration DWORD
+    pub fn read_pci_config(&self, offset: u32) -> windows::core::Result<u32> {
+        unsafe {
+            let mut value: u32 = 0;
+            let result = (self.read_pci_config)(0, offset, &mut value as *mut u32);
+            if result.as_bool() {
+                Ok(value)
+            } else {
+                Err(Error::new(
+                    E_FAIL,
+                    format!("Failed to read PCI config at offset 0x{:X}", offset),
+                ))
+            }
         }
     }
 
-    pub fn write_pci_config(&self, reg: u32, value: u32) -> windows::core::Result<()> {
-        // Write to device 0:0:0.0 (northbridge)
-        let pci_address = 0x00000000;
-
-        let result = unsafe { (self.write_pci_config)(pci_address, reg, value) };
-
-        match result.as_bool() {
-            true => Ok(()),
-            false => Err(Error::new(
-                E_FAIL,
-                format!("Failed to write PCI config space at offset 0x{:X}", reg),
-            )),
+    /// Writes a PCI configuration DWORD
+    pub fn write_pci_config(&self, offset: u32, value: u32) -> windows::core::Result<()> {
+        unsafe {
+            let result = (self.write_pci_config)(0, offset, value);
+            if result.as_bool() {
+                Ok(())
+            } else {
+                Err(Error::new(
+                    E_FAIL,
+                    format!("Failed to write PCI config at offset 0x{:X}", offset),
+                ))
+            }
         }
     }
 }
 
+// Drop implementation to deinitialize WinRing0
 impl Drop for WinRing0 {
     fn drop(&mut self) {
         unsafe {
             (self.deinitialize)();
         }
     }
+}
+
+pub fn verify_winring0_driver() -> anyhow::Result<()> {
+    // Check that the WinRing0 DLL is in the current directory
+    let winring0_dll_path = std::env::current_dir().unwrap().join(WINRING0_DLL);
+    if !winring0_dll_path.exists() {
+        return Err(anyhow::anyhow!(
+            "WinRing0 DLL not found in current directory: {:?}",
+            winring0_dll_path
+        ));
+    }
+
+    // Check that all the registry modifications have been applied
+    for modification in DISABLE_VULNERABLE_DRIVER_BLOCKLIST.iter() {
+        match read_registry_value(modification.path, modification.key) {
+            Ok(value) => {
+                if value.is_none() {
+                    return Err(anyhow::anyhow!(
+                        "Registry value not found: {}\\{}",
+                        modification.path,
+                        modification.key
+                    ));
+                } else if value.unwrap() != modification.value {
+                    return Err(anyhow::anyhow!(
+                        "Registry value mismatch: {}\\{}",
+                        modification.path,
+                        modification.key
+                    ));
+                }
+            }
+            Err(_) => return Err(anyhow::anyhow!("Failed to read registry value")),
+        }
+    }
+
+    for modification in DISABLE_HYPERVISOR_ENFORCED_CODE_INTEGRITY.iter() {
+        match read_registry_value(modification.path, modification.key) {
+            Ok(value) => {
+                if value.is_none() {
+                    return Err(anyhow::anyhow!(
+                        "Registry value not found: {}\\{}",
+                        modification.path,
+                        modification.key
+                    ));
+                } else if value.unwrap() != modification.value {
+                    return Err(anyhow::anyhow!(
+                        "Registry value mismatch: {}\\{}",
+                        modification.path,
+                        modification.key
+                    ));
+                }
+            }
+            Err(_) => return Err(anyhow::anyhow!("Failed to read registry value")),
+        }
+    }
+
+    Ok(())
 }
 
 // Modify the setup_winring0_service function
@@ -242,7 +314,7 @@ pub fn setup_winring0_driver() -> anyhow::Result<()> {
         if let Err(e) = create_or_modify_registry_value(
             modification.path,
             modification.key,
-            &modification.enabled,
+            &modification.value,
         ) {
             return Err(anyhow::anyhow!(
                 "Failed to create or modify registry value: {:?}",
@@ -256,7 +328,7 @@ pub fn setup_winring0_driver() -> anyhow::Result<()> {
         if let Err(e) = create_or_modify_registry_value(
             modification.path,
             modification.key,
-            &modification.enabled,
+            &modification.value,
         ) {
             return Err(anyhow::anyhow!(
                 "Failed to create or modify registry value: {:?}",

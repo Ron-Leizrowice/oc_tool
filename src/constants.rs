@@ -11,7 +11,7 @@ pub const COLUMN_WIDTH: f32 = TWEAK_CONTAINER_WIDTH + UI_SPACING;
 
 // Constants for layout and spacing
 pub const WINDOW_WIDTH: f32 = COLUMN_WIDTH * 3.0 + UI_SPACING * 4.0;
-pub const WINDOW_HEIGHT: f32 = 800.0;
+pub const WINDOW_HEIGHT: f32 = 640.0;
 
 pub const LABEL_FONT_SIZE: f32 = 14.0;
 

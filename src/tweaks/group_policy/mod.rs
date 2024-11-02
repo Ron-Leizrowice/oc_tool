@@ -1,9 +1,10 @@
 // src/tweaks/group_policy/mod.rs
 pub mod method;
 
+use indexmap::IndexMap;
 use method::{GroupPolicyTweak, GroupPolicyValue};
 
-use super::{Tweak, TweakCategory};
+use super::{Tweak, TweakCategory, TweakOption};
 use crate::tweaks::TweakId;
 
 pub fn all_group_policy_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
@@ -18,7 +19,8 @@ pub fn se_lock_memory_privilege<'a>() -> Tweak<'a> {
         GroupPolicyTweak {
             id: TweakId::SeLockMemoryPrivilege,
             key: "SeLockMemoryPrivilege",
-            value: GroupPolicyValue::Enabled,
+            options: IndexMap::from_iter(vec![(TweakOption::Enabled(false), GroupPolicyValue::Disabled),
+                                           (TweakOption::Enabled(true), GroupPolicyValue::Enabled)]),
         },
         true,
     )

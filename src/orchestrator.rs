@@ -5,7 +5,7 @@ use std::{sync::Arc, thread};
 use anyhow::Error;
 use crossbeam::channel;
 
-use crate::tweaks::{TweakId, TweakMethod};
+use crate::tweaks::{TweakId, TweakMethod, TweakOption};
 
 /// Represents the result of a processed task.
 #[derive(Debug)]
@@ -13,12 +13,11 @@ pub struct TweakResult {
     pub id: TweakId,
     pub success: bool,
     pub error: Option<Error>,
-    pub enabled_state: Option<bool>, // Some(true) if enabled, Some(false) if disabled, None if unknown
     pub action: TweakAction,
+    pub state: Option<TweakOption>,
 }
 
 /// Represents a task to be processed.
-#[derive(Clone)]
 pub struct TweakTask {
     pub id: TweakId,
     pub method: Arc<dyn TweakMethod>,
@@ -28,8 +27,9 @@ pub struct TweakTask {
 /// Actions that can be performed on a tweak.
 #[derive(Debug, Clone)]
 pub enum TweakAction {
-    Apply,
-    Revert,
+    Enable,
+    Disable,
+    Set(TweakOption),
     ReadInitialState,
 }
 
@@ -60,36 +60,52 @@ impl TaskOrchestrator {
         let result_sender = self.result_sender.clone();
         thread::spawn(move || {
             let result = match task.action {
-                TweakAction::Apply => match task.method.apply() {
+                TweakAction::Enable => match task.method.apply(TweakOption::Enabled(true)) {
                     Ok(_) => TweakResult {
                         id: task.id,
                         success: true,
                         error: None,
-                        enabled_state: Some(true),
-                        action: TweakAction::Apply,
+                        action: TweakAction::Enable,
+                        state: Some(TweakOption::Enabled(true)),
                     },
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
                         error: Some(e),
-                        enabled_state: None,
-                        action: TweakAction::Apply,
+                        action: TweakAction::Enable,
+                        state: None,
                     },
                 },
-                TweakAction::Revert => match task.method.revert() {
+                TweakAction::Disable => match task.method.revert() {
                     Ok(_) => TweakResult {
                         id: task.id,
                         success: true,
                         error: None,
-                        enabled_state: Some(false),
-                        action: TweakAction::Revert,
+                        action: TweakAction::Disable,
+                        state: Some(TweakOption::Enabled(false)),
                     },
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
                         error: Some(e),
-                        enabled_state: None,
-                        action: TweakAction::Revert,
+                        action: TweakAction::Disable,
+                        state: None,
+                    },
+                },
+                TweakAction::Set(option) => match task.method.apply(option.clone()) {
+                    Ok(_) => TweakResult {
+                        id: task.id,
+                        success: true,
+                        error: None,
+                        action: TweakAction::Set(option.clone()),
+                        state: Some(option),
+                    },
+                    Err(e) => TweakResult {
+                        id: task.id,
+                        success: false,
+                        error: Some(e),
+                        action: TweakAction::Set(option),
+                        state: None,
                     },
                 },
                 TweakAction::ReadInitialState => match task.method.initial_state() {
@@ -97,15 +113,15 @@ impl TaskOrchestrator {
                         id: task.id,
                         success: true,
                         error: None,
-                        enabled_state: Some(state),
                         action: TweakAction::ReadInitialState,
+                        state: Some(state),
                     },
                     Err(e) => TweakResult {
                         id: task.id,
                         success: false,
                         error: Some(e),
-                        enabled_state: None,
                         action: TweakAction::ReadInitialState,
+                        state: None,
                     },
                 },
             };

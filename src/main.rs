@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::collections::BTreeMap;
 
+use anyhow::Context;
 use eframe::{egui, App, Frame, NativeOptions};
-use egui::{Button, FontId, RichText};
+use egui::{Button, FontFamily, FontId, RichText};
 use egui_dialogs::{DialogDetails, Dialogs, StandardDialog, StandardReply};
 use oc_tool::{
     constants::{
@@ -11,24 +12,32 @@ use oc_tool::{
         WINDOW_HEIGHT, WINDOW_WIDTH,
     },
     orchestrator::{TaskOrchestrator, TweakAction, TweakTask},
-    tweaks::{self, Tweak, TweakCategory, TweakId, TweakStatus},
+    tweaks::{self, Tweak, TweakCategory, TweakId, TweakOption, TweakStatus},
     ui::{
         button::{ActionButton, ButtonState, BUTTON_DIMENSIONS},
+        combobox::SettingsComboBox,
         switch::ToggleSwitch,
         TweakWidget,
     },
     utils::{
-        smu::{SmuInterface, SmuType},
         windows::{is_elevated, reboot_into_bios, reboot_system},
-        winring0::{setup_winring0_driver, WINRING0_DRIVER},
+        winring0::{
+            setup_winring0_driver, verify_winring0_driver, WINRING0_DRIVER,
+            WINRING0_SETUP_USER_MESSAGE,
+        },
     },
 };
 use tracing::Level;
 use tracing_subscriber::{self};
 
-/// Represents your application's main structure.
 pub struct MyApp {
+    /// A map of all tweaks available in the application, indexed by their unique ID
+    /// The tweaks are stored in a BTreeMap to ensure consistent ordering
+    /// Each Tweak object contains the method for applying/reverting/reading initial state of the tweak
+    /// and the current state of the tweak
     pub tweaks: BTreeMap<TweakId, Tweak<'static>>,
+
+    /// Task orchestrator to manage tweak tasks
     pub orchestrator: TaskOrchestrator,
 
     // State tracking for initial state reads
@@ -36,8 +45,6 @@ pub struct MyApp {
     pub pending_initial_state_reads: usize,
 
     pub dialogs: Dialogs<'static>,
-
-    _selected_category: Option<TweakCategory>,
 }
 
 impl MyApp {
@@ -56,29 +63,31 @@ impl MyApp {
         if !is_elevated() {
             dialogs.add(DialogDetails::new(
                 StandardDialog::info("Warning", "This program must be run in administrator mode.")
-                    .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                    .buttons(vec![("OK".into(), StandardReply::Cancel)]),
             ));
         } else {
             // Attempt to verify WinRing0 setup
-            match setup_winring0_driver() {
+            match verify_winring0_driver() {
                 Ok(_) => {
-                    tracing::debug!("WinRing0 driver setup successful.");
+                    tracing::debug!("WinRing0 driver already set up.");
                 }
                 Err(err) => {
-                    tracing::debug!("WinRing0 driver setup failed: {:?}", err);
-
-                    // Add a dialog with the list of reasons
+                    tracing::debug!("WinRing0 driver not set up: {:?}", err);
                     dialogs.add(DialogDetails::new(
-                        StandardDialog::error(
-                            "WinRing0 Initialization Failed",
-                            format!("Failed to initialize WinRing0:\n{}", err),
+                        StandardDialog::confirm(
+                            "WinRing0 Driver Setup",
+                            WINRING0_SETUP_USER_MESSAGE,
                         )
-                        .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                        .buttons(vec![
+                            ("Accept".into(), StandardReply::Yes),
+                            ("Cancel".into(), StandardReply::Cancel),
+                        ]),
                     ));
                 }
             }
         }
 
+        // Submit initial state read tasks for all tweaks
         for (id, tweak) in tweaks.iter_mut() {
             let task = TweakTask {
                 id: *id,
@@ -91,14 +100,6 @@ impl MyApp {
                     id,
                     e
                 );
-                // Add a dialog to inform the user about the task submission failure
-                dialogs.add(DialogDetails::new(
-                    StandardDialog::error(
-                        "Initialization Error",
-                        format!("Failed to initialize tweak {:?}: {:?}", id, e),
-                    )
-                    .buttons(vec![("OK".into(), StandardReply::Ok)]),
-                ));
             }
         }
 
@@ -108,10 +109,10 @@ impl MyApp {
             initial_states_loaded: false,
             pending_initial_state_reads,
             dialogs,
-            _selected_category: Some(TweakCategory::System),
         }
     }
 
+    /// Iterates through all the tweaks and checks how many are waiting on a reboot
     fn count_tweaks_pending_reboot(&self) -> usize {
         self.tweaks
             .iter()
@@ -119,100 +120,80 @@ impl MyApp {
             .count()
     }
 
-    fn update_tweak_states(&mut self) {
+    /// Updates the tweak states based on the results received from the orchestrator
+    fn update_tweak_states(&mut self) -> anyhow::Result<()> {
         while let Some(result) = self.orchestrator.try_recv_result() {
             if let Some(tweak) = self.tweaks.get_mut(&result.id) {
                 if result.success {
-                    match tweak.status {
-                        TweakStatus::Applying => {
+                    match result.action {
+                        TweakAction::Set(ref option) => {
+                            // Update the state with the new option if successful
+                            tweak.state = option.clone();
                             tweak.status = TweakStatus::Idle;
+                            tracing::debug!(
+                                "Successfully updated tweak {:?} to state {:?}",
+                                result.id,
+                                option
+                            );
                         }
-                        TweakStatus::Idle => {
-                            if let Some(enabled) = result.enabled_state {
-                                tweak.enabled = enabled;
+                        TweakAction::Enable => {
+                            tweak.state = TweakOption::Enabled(true);
+                            tweak.status = TweakStatus::Idle;
+                            tracing::debug!("Successfully enabled tweak {:?}", result.id);
+                        }
+                        TweakAction::Disable => {
+                            tweak.state = TweakOption::Enabled(false);
+                            tweak.status = TweakStatus::Idle;
+                            tracing::debug!("Successfully disabled tweak {:?}", result.id);
+                        }
+                        TweakAction::ReadInitialState => {
+                            // Update the tweak state with the initial state read
+                            tweak.state = result.state.clone().unwrap();
+                            tweak.status = TweakStatus::Idle;
+                            // Decrement the pending reads count
+                            if self.pending_initial_state_reads > 0 {
+                                self.pending_initial_state_reads -= 1;
+                            }
+                            tracing::debug!(
+                                "Successfully read initial state for tweak {:?}: {:?}",
+                                result.id,
+                                result.state.unwrap()
+                            );
+                            // If all reads are done, mark initialization as complete
+                            if self.pending_initial_state_reads == 0 {
+                                self.initial_states_loaded = true;
                             }
                         }
-                        _ => {}
                     }
                 } else {
-                    // Set the tweak status to Failed with the error
-                    let error_message = result.error.unwrap();
-                    tracing::error!("Failed to process tweak {:?}: {}", result.id, error_message);
-                    tweak.status = TweakStatus::Failed(error_message.to_string());
-                }
-            }
+                    // Handle failure
+                    if let Some(err) = result.error {
+                        tweak.status = TweakStatus::Failed(err.to_string());
+                        tracing::error!("Failed to update tweak {:?}: {:?}", result.id, err);
 
-            if let TweakAction::ReadInitialState = result.action {
-                self.pending_initial_state_reads =
-                    self.pending_initial_state_reads.saturating_sub(1);
-
-                if self.pending_initial_state_reads == 0 {
-                    self.initial_states_loaded = true;
+                        // Attempt to read the current state again
+                        if let Err(e) = self.orchestrator.submit_task(TweakTask {
+                            id: result.id,
+                            method: tweak.method.clone(),
+                            action: TweakAction::ReadInitialState,
+                        }) {
+                            tracing::error!("Failed to submit state read task: {:?}", e);
+                        }
+                    }
                 }
             }
         }
 
-        // slow_mode and ultimate_performance are mutually exclusive
-        let slow_mode_state = self
-            .tweaks
-            .get(&TweakId::SlowMode)
-            .map(|t| t.enabled)
-            .unwrap_or(false);
-        let ultimate_performance_state = self
-            .tweaks
-            .get(&TweakId::UltimatePerformancePlan)
-            .map(|t| t.enabled)
-            .unwrap_or(false);
-
-        if slow_mode_state && ultimate_performance_state {
-            // Instead of panicking, add an error dialog
-            tracing::error!("Both Slow Mode and Ultimate Performance are enabled simultaneously.");
-            self.dialogs.add(DialogDetails::new(
-                StandardDialog::error(
-                    "Configuration Conflict",
-                    "Both Slow Mode and Ultimate Performance are enabled at the same time. Please disable one to proceed.",
-                )
-                .buttons(vec![("OK".into(), StandardReply::Ok)]),
-            ));
-            // Optionally, you can automatically disable one to resolve the conflict
-            // For example, disable Ultimate Performance if Slow Mode is enabled
-            if let Some(tweak) = self.tweaks.get_mut(&TweakId::UltimatePerformancePlan) {
-                tweak.enabled = false;
-            }
-        } else if slow_mode_state {
-            if let Some(tweak) = self.tweaks.get_mut(&TweakId::UltimatePerformancePlan) {
-                tweak.enabled = false;
-            }
-        } else if ultimate_performance_state {
-            if let Some(tweak) = self.tweaks.get_mut(&TweakId::SlowMode) {
-                tweak.enabled = false;
-            }
+        // Optionally, check if all initial reads are done outside the loop
+        if self.pending_initial_state_reads == 0 && !self.initial_states_loaded {
+            self.initial_states_loaded = true;
+            tracing::debug!("All initial state reads completed.");
         }
+
+        Ok(())
     }
 
     fn cleanup(&mut self) {
-        // disable low-res mode
-        if let Err(e) = self.orchestrator.submit_task(TweakTask {
-            id: TweakId::LowResMode,
-            method: self
-                .tweaks
-                .get(&TweakId::LowResMode)
-                .unwrap()
-                .method
-                .clone(),
-            action: TweakAction::Revert,
-        }) {
-            tracing::error!("Failed to submit revert task for low-res mode: {:?}", e);
-        }
-        // disable slow-mode
-        if let Err(e) = self.orchestrator.submit_task(TweakTask {
-            id: TweakId::SlowMode,
-            method: self.tweaks.get(&TweakId::SlowMode).unwrap().method.clone(),
-            action: TweakAction::Revert,
-        }) {
-            tracing::error!("Failed to submit revert task for slow mode: {:?}", e);
-        }
-        // drop the WinRing0 driver
         drop(WINRING0_DRIVER.lock().unwrap());
     }
 
@@ -282,12 +263,14 @@ impl MyApp {
                 .min_col_width(TWEAK_CONTAINER_WIDTH - BUTTON_DIMENSIONS[0] - UI_SPACING * 2.0)
                 .spacing([UI_SPACING, 0.0])
                 .show(ui, |ui| {
-                    // **First Column**: Collapsing Header with Description
+                    // First Column: Collapsing Header with Description
                     ui.vertical(|ui| {
                         ui.collapsing(tweak_name, |ui| {
                             ui.vertical(|ui| {
-                                ui.label(tweak_description);
-                                // **Error Message**: Displayed Below the Grid
+                                ui.label(
+                                    RichText::new(tweak_description)
+                                        .font(FontId::new(12.0, FontFamily::Proportional)),
+                                );
                                 if let Some(tweak_entry) = self.tweaks.get(&tweak_id) {
                                     if let TweakStatus::Failed(ref err) = tweak_entry.status {
                                         ui.colored_label(
@@ -302,15 +285,22 @@ impl MyApp {
                         });
                     });
 
-                    // **Second Column**: Widget (Toggle or Button), Fixed Width and Top-Aligned
-                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        // Ensure the widget has a fixed width to prevent shifting
-                        let widget_width = BUTTON_DIMENSIONS[0]; // Adjust as per your BUTTON_DIMENSIONS
+                    // Second Column: Widget (Toggle, Button, or ComboBox)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        // Set fixed width for all widgets
+                        let widget_width = BUTTON_DIMENSIONS[0];
                         ui.set_width(widget_width);
 
                         match tweak_widget {
                             TweakWidget::Toggle => self.draw_toggle_widget(ui, tweak_id),
                             TweakWidget::Button => self.draw_button_widget(ui, tweak_id),
+                            TweakWidget::SettingsComboBox => {
+                                // Ensure combo box aligns with other widgets
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::TOP),
+                                    |ui| self.draw_combo_box_widget(ui, tweak_id),
+                                );
+                            }
                         }
                     });
 
@@ -321,33 +311,37 @@ impl MyApp {
     }
 
     fn draw_toggle_widget(&mut self, ui: &mut egui::Ui, tweak_id: TweakId) {
-        if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
-            let mut is_enabled = tweak_entry.enabled;
-            let has_error = matches!(tweak_entry.status, TweakStatus::Failed(_));
+        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
+            let mut is_enabled = tweak.state == TweakOption::Enabled(true);
+            let has_error = matches!(tweak.status, TweakStatus::Failed(_));
 
             let widget = ToggleSwitch::new(&mut is_enabled).with_error(has_error);
 
             let response_toggle = ui.add(widget);
 
             if response_toggle.changed() {
-                tweak_entry.enabled = is_enabled;
-                if tweak_entry.requires_reboot {
-                    tweak_entry.pending_reboot = true;
+                tweak.state = if is_enabled {
+                    TweakOption::Enabled(true)
+                } else {
+                    TweakOption::Enabled(false)
+                };
+                if tweak.requires_reboot {
+                    tweak.pending_reboot = true;
                 }
-                tweak_entry.status = TweakStatus::Applying;
+                tweak.status = TweakStatus::Busy;
                 let result = self.orchestrator.submit_task(TweakTask {
                     id: tweak_id,
-                    method: tweak_entry.method.clone(),
+                    method: tweak.method.clone(),
                     action: if is_enabled {
-                        TweakAction::Apply
+                        TweakAction::Enable
                     } else {
-                        TweakAction::Revert
+                        TweakAction::Disable
                     },
                 });
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        tweak_entry.status = TweakStatus::Failed(e.to_string());
+                        tweak.status = TweakStatus::Failed(e.to_string());
                     }
                 }
             }
@@ -358,19 +352,18 @@ impl MyApp {
         if let Some(tweak_entry) = self.tweaks.get_mut(&tweak_id) {
             let button_state = match tweak_entry.status {
                 TweakStatus::Idle | TweakStatus::Failed(_) => ButtonState::Default,
-                TweakStatus::Applying => ButtonState::InProgress,
-                _ => ButtonState::Default,
+                TweakStatus::Busy => ButtonState::InProgress,
             };
 
             let mut button_state_mut = button_state;
             let response_button = ui.add(ActionButton::new(&mut button_state_mut));
 
             if response_button.clicked() && button_state == ButtonState::Default {
-                tweak_entry.status = TweakStatus::Applying;
+                tweak_entry.status = TweakStatus::Busy;
                 let result = self.orchestrator.submit_task(TweakTask {
                     id: tweak_id,
                     method: tweak_entry.method.clone(),
-                    action: TweakAction::Apply,
+                    action: TweakAction::Enable,
                 });
                 match result {
                     Ok(_) => {}
@@ -386,6 +379,54 @@ impl MyApp {
         }
     }
 
+    fn draw_combo_box_widget(
+        &mut self,
+        ui: &mut egui::Ui,
+        tweak_id: TweakId,
+    ) -> anyhow::Result<()> {
+        if let Some(tweak) = self.tweaks.get_mut(&tweak_id) {
+            // Extract the list of options (keys) from the BTreeMap
+            let options: Vec<TweakOption> = tweak.options.to_vec();
+
+            // Determine the currently selected option's index
+            let mut selected_option = options
+                .iter()
+                .position(|option| option == &tweak.state)
+                .context("Failed to find selected option index.")?;
+
+            // Create the combo box widget with the list of options
+            let widget = SettingsComboBox::new(tweak_id, &mut selected_option, options.clone());
+            let response_combo = ui.add(widget);
+
+            if response_combo.changed() {
+                tracing::debug!(
+                    "Selected option for tweak {:?}: {:?}",
+                    tweak_id,
+                    selected_option
+                );
+                // Retrieve the newly selected option based on the index
+                let new_option = options[selected_option].clone();
+
+                tweak.state = new_option.clone();
+                if tweak.requires_reboot {
+                    tweak.pending_reboot = true;
+                }
+
+                // Submit the task with the new option
+                self.orchestrator
+                    .submit_task(TweakTask {
+                        id: tweak_id,
+                        method: tweak.method.clone(),
+                        action: TweakAction::Set(new_option),
+                    })
+                    .context("Failed to submit registry task for tweak.")?;
+
+                tweak.status = TweakStatus::Busy;
+            }
+        }
+        Ok(())
+    }
+
     fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar")
             .min_height(TWEAK_CONTAINER_HEIGHT)
@@ -397,7 +438,7 @@ impl MyApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("v0.1.6a")
+                                RichText::new("v0.1.7a")
                                     .font(FontId::proportional(LABEL_FONT_SIZE)),
                             );
                             ui.separator();
@@ -474,24 +515,6 @@ impl MyApp {
                                             ));
                                         }
                                     }
-
-                                    if ui.add(Button::new("Read SMU Version")).clicked() {
-                                        match SmuInterface::new(SmuType::MP1) {
-                                            Ok(smu) => match smu.get_version() {
-                                                Ok(version) => {
-                                                    tracing::info!("SMU Version: {:?}", version)
-                                                }
-                                                Err(e) => tracing::error!(
-                                                    "Failed to get version: {:?}",
-                                                    e
-                                                ),
-                                            },
-                                            Err(e) => tracing::error!(
-                                                "Failed to initialize SMU interface: {:?}",
-                                                e
-                                            ),
-                                        }
-                                    }
                                 },
                             );
                         });
@@ -505,24 +528,42 @@ impl App for MyApp {
         // Process dialogs first
         if !self.dialogs.dialogs().is_empty() {
             if let Some(res) = self.dialogs.show(ctx) {
-                // handle reply from close confirmation dialog
-                if let Ok(StandardReply::Ok) = res.reply() {
-                    // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    tracing::debug!("Dialog closed by user.");
+                match res.reply() {
+                    Ok(StandardReply::Cancel) => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    Ok(StandardReply::Yes) => match setup_winring0_driver() {
+                        Ok(_) => {
+                            tracing::debug!("WinRing0 driver setup successful.");
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to set up WinRing0 driver: {:?}", e);
+                            self.dialogs.add(DialogDetails::new(
+                                StandardDialog::error(
+                                    "Driver Setup Error",
+                                    format!("Failed to set up WinRing0 driver: {:?}", e),
+                                )
+                                .buttons(vec![("OK".into(), StandardReply::Ok)]),
+                            ));
+                        }
+                    },
+                    _ => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 }
             }
         } else {
-            self.update_tweak_states();
+            match self.update_tweak_states() {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Failed to update tweak states: {:?}", e);
+                }
+            }
 
             if !self.initial_states_loaded {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.add_space(200.0);
-                            ui.heading("Reading system state...");
-                            ui.add(egui::widgets::Spinner::new());
-                        });
+                    ui.heading("Reading system state...");
+                    ui.add(egui::widgets::Spinner::new());
                 });
             } else {
                 self.draw_status_bar(ctx);

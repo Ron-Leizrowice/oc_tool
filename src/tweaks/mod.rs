@@ -31,8 +31,6 @@ pub enum TweakId {
     NoLowDiskSpaceChecks,
     AdditionalKernelWorkerThreads,
     DisableHPET,
-    AggressiveDpcHandling,
-    EnhancedKernelPerformance,
     DisableRamCompression,
     DisableApplicationTelemetry,
     DisableWindowsErrorReporting,
@@ -50,7 +48,7 @@ pub enum TweakId {
     DisableDataExecutionPrevention,
     DisableWindowsDefender,
     DisablePageFileEncryption,
-    DisableProcessIdleStates,
+    DisableCpuIdleStates,
     KillAllNonCriticalServices,
     DisableIntelTSX,
     DisableWindowsMaintenance,
@@ -62,21 +60,8 @@ pub enum TweakId {
     DisableSecurityAccountsManager,
     DisablePagingCombining,
     DisableSuperfetch,
-    SlowMode,
     EnableMcsss,
-    DisablePredictiveStoreForwarding,
-    DisableSpeculativeStoreBypass,
-    DisableSingleThreadIndirectBranchPredictor,
-    DisableIndirectBranchRestrictionSpeculation,
-    SelectiveBranchPredictorBarrier,
-    IndirectBranchPredictionBarrier,
     AutomaticIbrsEnable,
-    EnableUpperAddressIgnore,
-    DowngradeFp512ToFp256,
-    DisableRsmSpecialBusCycle,
-    DisableSmiSpecialBusCycle,
-    LongModeEnable,
-    SystemCallExtensionEnable,
     AggressivePrefetchProfile,
     DisableUpDownPrefetcher,
     DisableL2StreamPrefetcher,
@@ -85,28 +70,23 @@ pub enum TweakId {
     DisableL1StridePrefetcher,
     EnableMtrrFixedDramAttributes,
     EnableMtrrFixedDramModification,
-    EnableMtrrTopOfMemory2,
-    EnableMtrrVariableDram,
     EnableTranslationCacheExtension,
     EnableFastFxsaveFrstor,
-    EnableTom2WriteBack,
     DisbleControlFlowEnforcement,
     EnableInterruptibleWbinvd,
-    EnableInvdToWbinvdConversion,
     EnableL3CodeDataPrioritization,
     DisableStreamingStores,
     DisableRedirectForReturn,
     DisableOpCache,
     SpeculativeStoreModes,
-    DisableMonitorMonitorAndMwait,
     DisableAvx512,
     DisableFastShortRepMovsb,
     DisableEnhancedRepMovsbStosb,
     DisableRepMovStosStreaming,
-    DisablePss,
     DisableCoreWatchdogTimer,
     DisablePlatformFirstErrorHandling,
-    DisableSecureVirtualMachine,
+    AlchemyKernelTweak,
+    DisableDps
 }
 
 pub fn all_tweaks<'a>() -> BTreeMap<TweakId, Tweak<'a>> {
@@ -147,8 +127,10 @@ pub struct Tweak<'a> {
     pub method: Arc<dyn TweakMethod>,
     /// The widget to use for each tweak
     pub widget: &'a TweakWidget,
+    /// The available options for the tweak.
+    pub options: Vec<TweakOption>,
     /// Indicates whether the tweak is currently enabled.
-    pub enabled: bool,
+    pub state: TweakOption,
     /// The status of the tweak (e.g., "Applied", "In Progress", "Failed").
     pub status: TweakStatus,
     /// Whether the tweak requires restarting the system to take effect.
@@ -160,20 +142,26 @@ pub struct Tweak<'a> {
 /// Trait defining the behavior for all tweak methods.
 pub trait TweakMethod: Send + Sync {
     /// Checks if the tweak is currently enabled.
-    fn initial_state(&self) -> Result<bool, Error>;
+    fn initial_state(&self) -> Result<TweakOption, Error>;
 
     /// Applies the tweak.
-    fn apply(&self) -> Result<(), Error>;
+    fn apply(&self, option: TweakOption) -> Result<(), Error>;
 
     /// Reverts the tweak.
     fn revert(&self) -> Result<(), Error>;
 }
 
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TweakOption {
+    Run,
+    Enabled(bool),
+    Option(String),
+}
+
 #[derive(Debug)]
 pub enum TweakStatus {
     Idle,
-    Applying,
-    Reverting,
+    Busy,
     Failed(String),
 }
 
@@ -197,13 +185,7 @@ impl TweakCategory {
     }
 
     pub fn middle() -> Vec<Self> {
-        vec![
-            Self::Power,
-            Self::Security,
-            Self::Telemetry,
-            Self::Action,
-            Self::Services,
-        ]
+        vec![Self::Power, Self::Security, Self::Telemetry, Self::Services]
     }
 
     pub fn right() -> Vec<Self> {
@@ -219,15 +201,24 @@ impl<'a> Tweak<'a> {
         method: RegistryTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
+        let options: Vec<TweakOption> = method.options.keys().cloned().collect();
+        let state = options[0].clone();
+        let widget = match state {
+            TweakOption::Enabled(_) => &TweakWidget::Toggle,
+            TweakOption::Option(_) => &TweakWidget::SettingsComboBox,
+            _ => &TweakWidget::Button,
+        };
+
         Self {
             name,
             description,
             category,
             method: Arc::new(method),
-            widget: &TweakWidget::Toggle,
+            widget,
+            options,
             requires_reboot,
             status: TweakStatus::Idle,
-            enabled: false,
+            state,
             pending_reboot: false,
         }
     }
@@ -239,9 +230,12 @@ impl<'a> Tweak<'a> {
         method: PowershellTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
-        let widget = match method.undo_script {
-            Some(_) => &TweakWidget::Toggle,
-            None => &TweakWidget::Button,
+        let options: Vec<TweakOption> = method.options.keys().cloned().collect();
+        let state = options[0].clone();
+        let widget = match state {
+            TweakOption::Enabled(_) => &TweakWidget::Toggle,
+            TweakOption::Option(_) => &TweakWidget::SettingsComboBox,
+            _ => &TweakWidget::Button,
         };
 
         Self {
@@ -249,10 +243,11 @@ impl<'a> Tweak<'a> {
             description,
             category,
             method: Arc::new(method),
+            options,
             widget,
             requires_reboot,
             status: TweakStatus::Idle,
-            enabled: false,
+            state,
             pending_reboot: false,
         }
     }
@@ -264,15 +259,24 @@ impl<'a> Tweak<'a> {
         method: GroupPolicyTweak<'static>,
         requires_reboot: bool,
     ) -> Self {
+        let options: Vec<TweakOption> = method.options.keys().cloned().collect();
+        let state = options[0].clone();
+        let widget = match state {
+            TweakOption::Enabled(_) => &TweakWidget::Toggle,
+            TweakOption::Option(_) => &TweakWidget::SettingsComboBox,
+            _ => &TweakWidget::Button,
+        };
+
         Self {
             name,
             description,
             category,
             method: Arc::new(method),
-            widget: &TweakWidget::Toggle,
+            options,
+            widget,
             requires_reboot,
             status: TweakStatus::Idle,
-            enabled: false,
+            state,
             pending_reboot: false,
         }
     }
@@ -290,10 +294,11 @@ impl<'a> Tweak<'a> {
             description,
             category,
             method: Arc::new(method),
+            options: vec![TweakOption::Enabled(false), TweakOption::Enabled(true)],
             widget,
             requires_reboot,
             status: TweakStatus::Idle,
-            enabled: false,
+            state: TweakOption::Enabled(false),
             pending_reboot: false,
         }
     }
@@ -303,31 +308,26 @@ impl<'a> Tweak<'a> {
         description: &'a str,
         category: TweakCategory,
         method: MSRTweak,
-        requires_reboot: bool,
     ) -> Self {
+        let options: Vec<TweakOption> = method.options.keys().cloned().collect();
+        let state = options[0].clone();
+        let widget = match state {
+            TweakOption::Enabled(_) => &TweakWidget::Toggle,
+            TweakOption::Option(_) => &TweakWidget::SettingsComboBox,
+            _ => &TweakWidget::Button,
+        };
         Self {
             name,
             description,
             category,
             method: Arc::new(method),
-            widget: &TweakWidget::Toggle,
-            requires_reboot,
+            options,
+            widget,
+            requires_reboot: false,
             status: TweakStatus::Idle,
-            enabled: false,
+            state: TweakOption::Enabled(false),
             pending_reboot: false,
         }
-    }
-
-    pub fn initial_state(&self) -> Result<bool, anyhow::Error> {
-        self.method.initial_state()
-    }
-
-    pub fn apply(&self) -> Result<(), anyhow::Error> {
-        self.method.apply()
-    }
-
-    pub fn revert(&self) -> Result<(), anyhow::Error> {
-        self.method.revert()
     }
 }
 
@@ -342,8 +342,14 @@ mod tests {
         let all_tweaks = all_tweaks();
         let all_ids = TweakId::iter().collect::<Vec<_>>();
 
+        let mut unused_ids = Vec::new();
+
         for id in all_ids {
-            assert!(all_tweaks.contains_key(&id), "TweakId {:?} is not used", id);
+            if !all_tweaks.contains_key(&id) {
+                unused_ids.push(id);
+            }
         }
+
+        assert!(unused_ids.is_empty(), "Unused IDs: {:?}", unused_ids);
     }
 }

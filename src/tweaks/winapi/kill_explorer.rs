@@ -25,7 +25,7 @@ use winreg::{
     RegKey,
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use crate::tweaks::{TweakId, TweakMethod, TweakOption};
 
 /// Struct implementing the TweakMethod trait for killing Explorer.
 pub struct KillExplorerTweak {
@@ -43,16 +43,22 @@ impl KillExplorerTweak {
 
 impl TweakMethod for KillExplorerTweak {
     /// Checks the initial state of the tweak.
-    fn initial_state(&self) -> Result<bool, Error> {
+    fn initial_state(&self) -> Result<TweakOption, Error> {
         let explorer_running = is_explorer_running()?;
         let auto_restart_enabled = is_auto_restart_enabled()?;
 
         // Tweak is considered enabled if explorer is not running and auto-restart is disabled.
-        Ok(!explorer_running && !auto_restart_enabled)
+        if !explorer_running && !auto_restart_enabled {
+            info!("{:?} -> Initial state: Enabled", self.id);
+            Ok(TweakOption::Enabled(true))
+        } else {
+            info!("{:?} -> Initial state: Disabled", self.id);
+            Ok(TweakOption::Enabled(false))
+        }
     }
 
     /// Applies the tweak: Terminates Explorer and prevents it from restarting.
-    fn apply(&self) -> Result<(), Error> {
+    fn apply(&self, _option: TweakOption) -> Result<(), Error> {
         info!(
             "{:?} -> Terminating Explorer process and preventing restart...",
             self.id

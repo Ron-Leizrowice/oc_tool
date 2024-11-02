@@ -45,6 +45,9 @@ egui_dialogs = "0.3.5"
 lazy_static = "1.5.0"
 strum = "0.26.3"
 strum_macros = "0.26.4"
+raw-cpuid = "11.2.0"
+thiserror = "1.0.65"
+indexmap = "2.6.0"
 
 
 [profile.release-lto]

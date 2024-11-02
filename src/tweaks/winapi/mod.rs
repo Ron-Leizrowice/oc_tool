@@ -1,17 +1,13 @@
 // src/tweaks/winapi/mod.rs
 
-pub(crate) mod disable_processor_idle_states;
 pub(crate) mod kill_explorer;
 pub(crate) mod kill_non_critical_services;
 pub(crate) mod low_res_mode;
-pub(crate) mod slow_mode;
 pub(crate) mod ultimate_performance_plan;
 
-use disable_processor_idle_states::DisableProcessIdleStates;
 use kill_explorer::KillExplorerTweak;
 use kill_non_critical_services::KillNonCriticalServicesTweak;
 use low_res_mode::LowResMode;
-use slow_mode::SlowMode;
 use ultimate_performance_plan::UltimatePerformancePlan;
 
 use crate::{
@@ -25,12 +21,7 @@ pub fn all_winapi_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             TweakId::UltimatePerformancePlan,
             ultimate_performance_plan(),
         ),
-        (TweakId::SlowMode, slow_mode()),
         (TweakId::LowResMode, low_res_mode()),
-        (
-            TweakId::DisableProcessIdleStates,
-            disable_process_idle_states(),
-        ),
         (
             TweakId::KillAllNonCriticalServices,
             kill_all_non_critical_services(),
@@ -47,22 +38,6 @@ pub fn ultimate_performance_plan<'a>() -> Tweak<'a> {
         UltimatePerformancePlan::new(),
         &TweakWidget::Toggle,
         false, // requires reboot
-    )
-}
-
-pub fn slow_mode<'a>() -> Tweak<'a> {
-    Tweak::winapi(
-        "Slow Mode",
-        "Places the system in a low-power state by:
-1. Switching to the Power Saver scheme
-2. Limiting max cores to 2
-3. Limiting CPU frequency
-4. Delaying CPU performance state transitions
-",
-        TweakCategory::Power,
-        SlowMode::new(),
-        &TweakWidget::Toggle,
-        false, // does not require reboot
     )
 }
 
@@ -85,17 +60,6 @@ pub fn low_res_mode<'a>() -> Tweak<'a> {
     )
 }
 
-pub fn disable_process_idle_states<'a>() -> Tweak<'a> {
-    Tweak::winapi(
-        "Disable Process Idle States",
-        "Disables processor idle states (C-states) to prevent the CPU from entering low-power states during idle periods. This tweak can improve system responsiveness but may increase power consumption and heat output.",
-        TweakCategory::Power,
-        DisableProcessIdleStates::new(),
-        &TweakWidget::Toggle,
-        false,
-    )
-}
-
 pub fn kill_all_non_critical_services<'a>() -> Tweak<'a> {
     Tweak::winapi(
         "Kill All Non-Critical Services",
@@ -112,7 +76,7 @@ pub fn kill_explorer<'a>() -> Tweak<'a> {
     Tweak::winapi(
         "Kill Explorer",
         "Terminates the Windows Explorer process and prevents it from automatically restarting. This can free up system resources but will remove the desktop interface. Use with caution.",
-        TweakCategory::Action,
+        TweakCategory::System,
         KillExplorerTweak::new(),
         &TweakWidget::Toggle,
         false,

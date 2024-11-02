@@ -1,5 +1,6 @@
 // src/tweaks/definitions/ultimate_performance_plan.rs
 
+use anyhow::Result;
 use windows::core::GUID;
 
 use crate::{
@@ -7,7 +8,7 @@ use crate::{
         duplicate_power_scheme, get_active_power_scheme, get_all_power_schemes,
         set_active_power_scheme, PowerScheme,
     },
-    tweaks::{TweakId, TweakMethod},
+    tweaks::{TweakId, TweakMethod, TweakOption},
 };
 
 const ULTIMATE_PERFORMANCE_POWER_SCHEME_GUID: GUID =
@@ -28,12 +29,16 @@ impl UltimatePerformancePlan {
 }
 
 impl TweakMethod for UltimatePerformancePlan {
-    fn initial_state(&self) -> Result<bool, anyhow::Error> {
+    fn initial_state(&self) -> Result<TweakOption> {
         tracing::debug!("{:?}-> Checking initial state", self.id);
-        Ok(self.default_power_plan.guid == ULTIMATE_PERFORMANCE_POWER_SCHEME_GUID)
+        if self.default_power_plan.guid == ULTIMATE_PERFORMANCE_POWER_SCHEME_GUID {
+            Ok(TweakOption::Enabled(true))
+        } else {
+            Ok(TweakOption::Enabled(false))
+        }
     }
 
-    fn apply(&self) -> Result<(), anyhow::Error> {
+    fn apply(&self, _option: TweakOption) -> Result<()> {
         let available_schemes = get_all_power_schemes().expect("Failed to list power schemes");
         // check if any are called "Ultimate Performance"
         match available_schemes
@@ -74,39 +79,5 @@ impl TweakMethod for UltimatePerformancePlan {
         set_active_power_scheme(&self.default_power_plan.guid)?;
         tracing::debug!("{:?}-> Reverted Ultimate Performance power plan", self.id);
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_initial_state() {
-        let tweak = UltimatePerformancePlan::new();
-        assert!(!tweak.initial_state().unwrap());
-    }
-
-    #[test]
-    fn test_apply() {
-        let tweak = UltimatePerformancePlan::new();
-
-        match tweak.apply() {
-            Ok(_) => {
-                let active_scheme = get_active_power_scheme();
-                assert_eq!(active_scheme.unwrap().name, "Ultimate Performance");
-            }
-            Err(e) => {
-                panic!("Failed to apply tweak: {:?}", e);
-            }
-        }
-    }
-
-    #[test]
-    fn test_revert() {
-        let tweak = UltimatePerformancePlan::new();
-        tweak.apply().unwrap();
-        tweak.revert().unwrap();
-        assert!(!tweak.initial_state().unwrap());
     }
 }

@@ -19,7 +19,7 @@ use windows::{
     },
 };
 
-use crate::tweaks::{TweakId, TweakMethod};
+use crate::tweaks::{TweakId, TweakMethod, TweakOption};
 
 const SERVICES_TO_KILL: &[&str; 102] = &[
     "AdobeARMservice",            // Adobe Acrobat Update Service
@@ -284,12 +284,12 @@ impl KillNonCriticalServicesTweak {
 }
 
 impl TweakMethod for KillNonCriticalServicesTweak {
-    fn initial_state(&self) -> Result<bool, Error> {
+    fn initial_state(&self) -> Result<TweakOption, Error> {
         // Since this is an action, it doesn't have a state
-        Ok(false)
+        Ok(TweakOption::Enabled(false))
     }
 
-    fn apply(&self) -> Result<(), Error> {
+    fn apply(&self, _option: TweakOption) -> Result<(), Error> {
         info!("{:?} -> Killing non-critical services.", self.id);
         let mut failed_services: Vec<String> = vec![];
 
@@ -311,7 +311,6 @@ impl TweakMethod for KillNonCriticalServicesTweak {
         // Try stopping services up to 5 times
         for attempt in 1..=5 {
             tracing::info!("Attempting to stop services - Attempt: {}", attempt);
-            let mut current_failed_services = vec![];
 
             for &service_name in SERVICES_TO_KILL.iter() {
                 // Open the service with a timeout
@@ -359,22 +358,11 @@ impl TweakMethod for KillNonCriticalServicesTweak {
                             "Attempt {}: Failed to stop service '{}': {}",
                             attempt, service_name, e
                         );
-                        current_failed_services.push(service_name.to_string());
                     }
                 }
             }
 
-            // If no failures in this attempt, break early
-            if current_failed_services.is_empty() {
-                info!("All services stopped successfully.");
-                break;
-            }
-
-            // Update the list of failed services
-            failed_services = current_failed_services;
-
-            // Optionally, you can add a short delay before the next attempt
-            thread::sleep(Duration::from_millis(1000));
+            thread::sleep(Duration::from_millis(500));
         }
 
         if !failed_services.is_empty() {

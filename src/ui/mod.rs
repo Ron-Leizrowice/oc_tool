@@ -10,4 +10,5 @@ pub mod switch;
 pub enum TweakWidget {
     Toggle,
     Button,
+    SettingsComboBox,
 }

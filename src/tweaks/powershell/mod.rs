@@ -2,9 +2,11 @@
 
 pub mod method;
 
-use method::PowershellTweak;
+use std::collections::HashMap;
 
-use super::{Tweak, TweakCategory};
+use method::{PowershellAction, PowershellTweak};
+
+use super::{Tweak, TweakCategory, TweakOption};
 use crate::tweaks::TweakId;
 
 pub fn all_powershell_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
@@ -20,6 +22,8 @@ pub fn all_powershell_tweaks<'a>() -> Vec<(TweakId, Tweak<'a>)> {
             disable_data_execution_prevention(),
         ),
         (TweakId::DisableSuperfetch, disable_superfetch()),
+        (TweakId::DisableCpuIdleStates, disable_cpu_idle_states()),
+        (TweakId::DisableDps, disable_dps()),
     ]
 }
 
@@ -31,20 +35,14 @@ pub fn process_idle_tasks<'a>() -> Tweak<'a> {
         PowershellTweak {
             id: TweakId::ProcessIdleTasks,
             read_script: None,
-            apply_script: r#"
-                $advapi32 = Add-Type -MemberDefinition @"
-                    [DllImport("advapi32.dll", EntryPoint="ProcessIdleTasks")]
-                    public static extern bool ProcessIdleTasks();
-                "@ -Name "Advapi32" -Namespace "Win32" -PassThru
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Run,
+                    &PowershellAction {
+                        script:"rundll32.exe advapi32.dll,ProcessIdleTasks",
+            state: None})],
+            ),
 
-                if ($advapi32::ProcessIdleTasks()) {
-                    Write-Output "Process Idle Tasks completed successfully."
-                } else {
-                    Write-Error "Failed to run Process Idle Tasks."
-                }
-            "#,
-            undo_script: None,
-            target_state: None,
         },
         false, // does not require reboot
     )
@@ -57,19 +55,39 @@ pub fn disable_hpet<'a>() -> Tweak<'a> {
         TweakCategory::System,
         PowershellTweak {
             id: TweakId::DisableHPET,
-            read_script: Some(r#"(bcdedit /enum | Select-String "useplatformclock").ToString().Trim()"#),
-
-            apply_script: r#"
-            bcdedit /deletevalue useplatformclock
-            bcdedit /set disabledynamictick yes
-            "#.trim(),
-
-            undo_script: Some(r#"
-            bcdedit /set useplatformclock true
-            bcdedit /set disabledynamictick no
-            "#.trim()),
-
-            target_state: Some("useplatformclock        Yes".trim()),
+            read_script: Some(
+                r#"bcdedit /enum | Select-String "useplatformclock" | ForEach-Object {
+                    if (($_ -split '\s+')[1] -eq 'Yes') {
+                        'True'
+                    } else {
+                        'False'
+                    }
+                } | Select-Object -Unique"#
+            ),
+            options: HashMap::from_iter(
+                vec![
+                    (
+                        TweakOption::Enabled(false),
+                        &PowershellAction {
+                            script: r#"
+                                bcdedit /deletevalue useplatformclock
+                                bcdedit /set disabledynamictick yes
+                            "#,
+                            state: Some("True"),
+                        }
+                    ),
+                    (
+                        TweakOption::Enabled(true),
+                        &PowershellAction {
+                            script: r#"
+                                bcdedit /set useplatformclock true
+                                bcdedit /set disabledynamictick no
+                            "#,
+                            state: Some("False"),
+                        },
+                    ),
+                ],
+            ),
         },
         true,
     )
@@ -84,28 +102,38 @@ pub fn disable_ram_compression<'a>() -> Tweak<'a> {
             id: TweakId::DisableRamCompression,
             read_script: Some(
                 r#"
-(Get-MMAgent | Out-String -Stream | Select-String -Pattern "MemoryCompression").ToString().Trim() -Match "False"
-                "#
-                .trim(),
+                $ramCompression = Get-MMAgent | Select-Object -ExpandProperty MemoryCompression
+
+                if ($ramCompression -eq $true) {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+                "#.trim(),
             ),
-            apply_script:
-                r#"Disable-MMAgent -mc"#
-                .trim(),
-            undo_script: Some(
-                r#"Enable-MMAgent -mc"#
-                .trim(),
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: r#"Disable-MMAgent -mc"#,
+                        state: Some("True"),
+                    }),
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: r#"Enable-MMAgent -mc"#,
+                        state: Some("False"),
+                    }),
+                ],
             ),
-            target_state: Some("True"),
         },
         true,
-
     )
 }
 
 pub fn disable_local_firewall<'a>() -> Tweak<'a> {
     Tweak::powershell_tweak(
         "Disable Local Firewall",
-        "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`. **Warning:** This exposes the system to potential security threats and may cause issues with IPsec server connections.",
+        "Disables the local Windows Firewall for all profiles by setting the firewall state to `off`.",
         TweakCategory::Security,
         PowershellTweak {
             id: TweakId::DisableLocalFirewall,
@@ -114,38 +142,29 @@ pub fn disable_local_firewall<'a>() -> Tweak<'a> {
                 $firewallState = netsh advfirewall show allprofiles state | Select-String "State" | ForEach-Object { $_.Line }
 
                 if ($firewallState -match "off") {
-                    "Enabled"
+                    "Off"
                 } else {
-                    "Disabled"
+                    "On"
                 }
                 "#
                 .trim(),
             ),
-            apply_script:
-                r#"
-                try {
-                    netsh advfirewall set allprofiles state off
-                    Write-Output "Disable Local Firewall Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Local Firewall Tweaks: $_"
-                }
-                "#
-                .trim(),
-            undo_script: Some(
-                r#"
-                try {
-                    netsh advfirewall set allprofiles state on
-                    Write-Output "Disable Local Firewall Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Local Firewall Tweaks: $_"
-                }
-                "#
-                .trim(),
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: "netsh advfirewall set allprofiles state on",
+                        state: Some("On"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: "netsh advfirewall set allprofiles state off",
+                        state: Some("Off"),
+                    }),
+                ],
             ),
-            target_state: Some("Enabled"),
         },
         true,
-
     )
 }
 
@@ -158,47 +177,31 @@ pub fn disable_success_auditing<'a>() -> Tweak<'a> {
             id: TweakId::DisableSuccessAuditing,
             read_script: Some(
                 r#"
-# Ensure $auditSettings is an array
-$auditSettings = @(AuditPol /get /category:* | Where-Object { $_ -match "No Auditing" })
+                $auditSettings = AuditPol /get /category:* | Where-Object { $_ -match "No Auditing" }
 
-# Check if the array has elements using .Count
-if ($auditSettings.Count -gt 0) {
-    $result = "Enabled"
-} else {
-    $result = "Disabled"
-}
-
-# Output the result
-Write-Output $result
-                "#
-                .trim(),
-            ),
-            apply_script:
-                r#"
-                try {
-                    Auditpol /set /category:* /Success:disable
-                    Write-Output "Disable Success Auditing Applied Successfully."
-                } catch {
-                    Write-Error "Failed to apply Disable Success Auditing: $_"
+                if ($auditSettings.Count -gt 0) {
+                    "Enabled"
+                } else {
+                    "Disabled"
                 }
-                "#
-                .trim(),
-
-            undo_script: Some(
-                r#"
-                try {
-                    Auditpol /set /category:* /Success:enable
-                    Write-Output "Disable Success Auditing Reverted Successfully."
-                } catch {
-                    Write-Error "Failed to revert Disable Success Auditing: $_"
-                }
-                "#
-                .trim(),
+                "#.trim(),
             ),
-            target_state: Some("Enabled"),
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: "Auditpol /set /category:* /Success:enable",
+                        state: Some("Disabled"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: "Auditpol /set /category:* /Success:disable",
+                        state: Some("Enabled"),
+                    }),
+                ],
+            ),
         },
         true,
-
     )
 }
 
@@ -214,20 +217,31 @@ pub fn disable_pagefile<'a>() -> Tweak<'a> {
                 $pagefileSettings = Get-WmiObject -Class Win32_PageFileUsage | Select-Object -ExpandProperty AllocatedBaseSize
 
                 if ($pagefileSettings -eq 0) {
-                    "Enabled"
-                } else {
                     "Disabled"
+                } else {
+                    "Enabled"
                 }
                 "#.trim(),
             ),
-            apply_script:"fsutil behavior set encryptpagingfile 0",
-            undo_script: Some(
-               "fsutil behavior set encryptpagingfile 1",
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false), // Keep pagefile enabled
+                    &PowershellAction {
+                        script: "wmic computersystem set AutomaticManagedPagefile=True",
+                        state: Some("Enabled"),  // Changed to match actual state
+                    }),
+                    (TweakOption::Enabled(true), // Disable pagefile
+                    &PowershellAction {
+                        script: "
+wmic computersystem set AutomaticManagedPagefile=False
+wmic pagefileset delete
+",
+                        state: Some("Disabled"),  // Changed to match actual state
+                    }),
+                ],
             ),
-            target_state: Some("Enabled"),
         },
-        true,
-
+        true, // requires reboot
     )
 }
 
@@ -243,20 +257,29 @@ pub fn disable_data_execution_prevention<'a>() -> Tweak<'a> {
                 $depSettings = bcdedit /enum | Select-String 'nx'
 
                 if ($depSettings -match 'AlwaysOff') {
-                    "Enabled"
-                } else {
                     "Disabled"
+                } else {
+                    "Enabled"
                 }
                 "#
                 .trim(),
             ),
-            apply_script: "bcdedit.exe /set nx AlwaysOff",
-            undo_script: Some(
-                "bcdedit.exe /set nx OptIn",
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: "bcdedit.exe /set nx OptIn",
+                        state: Some("Enabled"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: "bcdedit.exe /set nx AlwaysOff",
+                        state: Some("Disabled"),
+                    }),
+                ],
             ),
-            target_state: Some("Enabled"),
         },
-        true,
+        true, // requires reboot
     )
 }
 
@@ -272,19 +295,101 @@ pub fn disable_superfetch<'a>() -> Tweak<'a> {
                 $superfetchStatus = Get-Service -Name SysMain | Select-Object -ExpandProperty Status
 
                 if ($superfetchStatus -eq "Running") {
-                    "Disabled"
-                } else {
                     "Enabled"
+                } else {
+                    "Disabled"
                 }
                 "#
                 .trim(),
             ),
-            apply_script: r#"Stop-Service -Force -Name "SysMain"; Set-Service -Name "SysMain" -StartupType Disabled"#,
-            undo_script: Some(
-                r#"Set-Service -Name "SysMain" -StartupType Automatic -Status Running"#,
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: r#"Set-Service -Name "SysMain" -StartupType Automatic -Status Running"#,
+                        state: Some("Disabled"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: r#"Stop-Service -Force -Name "SysMain"; Set-Service -Name "SysMain" -StartupType Disabled"#,
+                        state: Some("Enabled"),
+                    }),
+
+                ],
             ),
-            target_state: Some("Enabled"),
         },
         true, // requires reboot
+    )
+}
+
+fn disable_cpu_idle_states<'a>() -> Tweak<'a> {
+    Tweak::powershell_tweak(
+        "Disable CPU Idle States",
+        "Disables CPU idle states (C-states) to prevent the processor from entering low-power states. This tweak can reduce latency and improve performance in real-time applications but may increase power consumption and heat output.",
+        TweakCategory::Power,
+        PowershellTweak {
+            id: TweakId::DisableCpuIdleStates,
+            read_script: Some(
+                r#"
+powercfg /QH |
+    Select-String -Pattern 'GUID Alias:\s+IDLEDISABLE' -Context 0,6 |
+    ForEach-Object {
+        $_.Context.PostContext |
+        Select-String 'Current AC Power Setting Index:' |
+        ForEach-Object {
+            ($_ -split ':')[1].Trim()
+        }
+    }
+                "#.trim(),
+            ),
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: r#"
+                        powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR IdleDisable 0
+                        powercfg.exe /setactive SCHEME_CURRENT
+                        "#,
+                        state: Some("0x00000000"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: r#"
+                        powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR IdleDisable 1
+                        powercfg.exe /setactive SCHEME_CURRENT
+                        "#,
+                        state: Some("0x00000001"),
+                    }),
+                ],
+            ),
+        },
+        false, // does not require reboot
+    )
+}
+
+fn disable_dps<'a>() -> Tweak<'a> {
+    Tweak::powershell_tweak(
+        "Disable Diagnostic Policy Service",
+        "Disables the Diagnostic Policy Service (DPS), which is responsible for troubleshooting and diagnostics in Windows.",
+        TweakCategory::System,
+        PowershellTweak {
+            id: TweakId::DisableDps,
+            read_script: Some(r#"(Get-Service -Name "DPS").Status"#),
+            options: HashMap::from_iter(
+                vec![
+                    (TweakOption::Enabled(false),
+                    &PowershellAction {
+                        script: r#"Start-Service -Force -Name "DPS""#,
+                        state: Some("Running"),
+                    }),
+                    (TweakOption::Enabled(true),
+                    &PowershellAction {
+                        script: r#"Stop-Service -Name "DPS" -Force"#,
+                        state: Some("Stopped"),
+                    }),
+                ],
+            ),
+        },
+        false, // does not require reboot
     )
 }
